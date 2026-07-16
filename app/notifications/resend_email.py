@@ -68,3 +68,43 @@ def send_invite_email(
     except resend.exceptions.ResendError as exc:
         logger.error("Resend email send failed for %s: %s", to_email, exc)
         return False, str(exc)
+
+
+def send_interview_invite_email(
+    to_email: str | None,
+    applicant_name: str | None,
+    program_name: str,
+    scheduled_at: datetime,
+) -> tuple[bool, str]:
+    """Sends the final-interview invite email through Resend, once an
+    interview has actually been scheduled. Same pattern and (success, detail)
+    contract as send_invite_email above — never raises, callers use the
+    return value to set Notification.status.
+    """
+    if not to_email:
+        return False, "applicant has no email address on file"
+
+    resend.api_key = os.environ["RESEND_API_KEY"]
+    from_email = os.environ["RESEND_FROM_EMAIL"]
+
+    greeting_name = applicant_name or "Applicant"
+    subject = "Your Interview Has Been Scheduled"
+    html = (
+        f"<p>Dear {greeting_name},</p>"
+        f"<p><b>Program:</b> {program_name}<br>"
+        f"<b>Interview Date &amp; Time:</b> {_format_ist(scheduled_at)}</p>"
+        "<p>Please be available at the scheduled time. Further details will "
+        "follow separately if needed.</p>"
+        "<p>Regards,<br>Admin Team</p>"
+        '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
+    )
+
+    try:
+        response = resend.Emails.send(
+            {"from": from_email, "to": to_email, "subject": subject, "html": html}
+        )
+        message_id = response.get("id", "") if isinstance(response, dict) else getattr(response, "id", "")
+        return True, message_id
+    except resend.exceptions.ResendError as exc:
+        logger.error("Resend interview-invite email failed for %s: %s", to_email, exc)
+        return False, str(exc)
