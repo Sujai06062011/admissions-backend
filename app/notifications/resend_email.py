@@ -1,14 +1,26 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import resend
 
 logger = logging.getLogger(__name__)
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _format_ist(dt: datetime) -> str:
+    return dt.astimezone(IST).strftime("%d %b %Y %I:%M%p IST")
+
 
 def send_invite_email(
-    to_email: str | None, temp_username: str, temp_password: str, expires_at: datetime
+    to_email: str | None,
+    applicant_name: str | None,
+    program_name: str,
+    applied_at: datetime,
+    temp_username: str,
+    temp_password: str,
+    expires_at: datetime,
 ) -> tuple[bool, str]:
     """Sends the campus-invite email through Resend.
 
@@ -16,6 +28,11 @@ def send_invite_email(
     human-readable failure reason otherwise. Never raises — callers use the
     return value to set Notification.status, so a delivery failure shouldn't
     blow up the request that triggered it.
+
+    Deliberately leaves out campus test date/time and address: neither has real
+    data behind it yet (no CampusSession is created on this transition, and
+    there's no address field anywhere in the schema), and this email goes to
+    real applicants, so it shouldn't show placeholder/fake values.
     """
     if not to_email:
         return False, "applicant has no email address on file"
@@ -23,13 +40,19 @@ def send_invite_email(
     resend.api_key = os.environ["RESEND_API_KEY"]
     from_email = os.environ["RESEND_FROM_EMAIL"]
 
-    subject = "Your admissions test login details"
+    greeting_name = applicant_name or "Applicant"
+    subject = "Your Application Has Moved to the Next Stage"
     html = (
-        "<p>Your application has moved to the next stage. Use the credentials "
-        "below to log in and take your test.</p>"
+        f"<p>Dear {greeting_name},</p>"
+        f"<p><b>Program Applied For:</b> {program_name}<br>"
+        f"<b>Applied On:</b> {_format_ist(applied_at)}<br>"
+        f"<b>Current Status:</b> Your application has moved to the next stage.</p>"
+        "<p>Use the credentials below to log in and take your test.</p>"
         f"<p><b>Username:</b> {temp_username}<br>"
         f"<b>Password:</b> {temp_password}</p>"
-        f"<p>These credentials expire at {expires_at.isoformat()}.</p>"
+        f"<p>These credentials expire at {_format_ist(expires_at)}.</p>"
+        "<p>Regards,<br>Admin Team</p>"
+        '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
     )
 
     try:

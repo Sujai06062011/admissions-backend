@@ -21,6 +21,9 @@ def send_campus_invite(
 
     email_ok, _ = send_invite_email(
         to_email=applicant.email if applicant else None,
+        applicant_name=applicant.full_name if applicant else None,
+        program_name=application.program.name,
+        applied_at=application.created_at,
         temp_username=credential.temp_username,
         temp_password=temp_password,
         expires_at=credential.expires_at,
