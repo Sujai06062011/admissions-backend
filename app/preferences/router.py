@@ -4,10 +4,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.credentials.generation import generate_credentials
 from app.db.session import get_db
 from app.models.core import AdminUser, Program
 from app.models.stage1 import Application
 from app.models.stage2 import AdminDecision, PreferenceConfig, PreferenceMatchResult
+from app.notifications.invite import send_campus_invite
 from app.preferences.matching import compute_preference_match
 from app.preferences.schemas import (
     ApplicationMatchResultItem,
@@ -130,6 +132,10 @@ def create_admin_decision(
     db.add(decision)
 
     _apply_status_transition(application, payload.stage, payload.decision)
+
+    if application.status == "moved_to_campus":
+        credential, plaintext_password = generate_credentials(db, application)
+        send_campus_invite(db, application, credential, plaintext_password)
 
     db.commit()
     db.refresh(decision)
