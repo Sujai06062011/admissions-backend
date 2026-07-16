@@ -38,3 +38,8 @@ def save_recording(application_id: uuid.UUID, upload: UploadFile) -> str:
     )
 
     return object_path
+
+
+def download_recording(object_path: str) -> bytes:
+    """Downloads a recording's raw bytes from the Supabase 'recordings' bucket."""
+    return _get_client().storage.from_(RECORDINGS_BUCKET).download(object_path)

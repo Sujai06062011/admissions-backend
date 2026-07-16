@@ -6,3 +6,5 @@ supabase
 python-multipart
 bcrypt
 resend
+groq
+anthropic

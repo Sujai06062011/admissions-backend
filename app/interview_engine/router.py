@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -19,6 +19,7 @@ from app.models.scheduling import CampusSession
 from app.models.stage1 import Application
 from app.models.stage3_test_b import Prompt, PromptBank, TestBSession
 from app.schemas.stage3 import PromptType, TestBSessionResponse
+from workers.interview_scoring import enqueue_interview_scoring
 
 router = APIRouter(tags=["interview_engine"])
 
@@ -173,6 +174,7 @@ def delete_prompt(prompt_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
 )
 def submit_recording(
     application_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     prompt_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -205,7 +207,16 @@ def submit_recording(
     session.prompt = prompt
     session.recording_url = recording_url
     session.recorded_at = datetime.now(timezone.utc)
+    # Clear any prior scoring immediately on re-submission so a stale
+    # transcript/score from a previous recording is never visible against
+    # this new one while the background job is still running.
+    session.transcript = None
+    session.rubric_score = None
+    session.rationale = None
 
     db.commit()
     db.refresh(session)
+
+    enqueue_interview_scoring(background_tasks, str(application_id))
+
     return session
