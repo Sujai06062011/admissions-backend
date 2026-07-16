@@ -9,6 +9,7 @@ from app.models.stage1 import Application
 from app.models.stage3_test_a import TestASession, TestBlueprint
 from app.test_engine.generation import (
     InsufficientQuestions,
+    MalformedQuestion,
     NoTestBlueprintConfigured,
     build_generated_questions,
 )
@@ -79,6 +80,8 @@ def start_test_a_session(
             status_code=404, detail="No test blueprint configured for this program"
         )
     except InsufficientQuestions as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except MalformedQuestion as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
     if existing is None:

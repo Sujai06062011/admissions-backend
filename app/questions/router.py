@@ -21,6 +21,7 @@ from app.questions.schemas import (
     TestBlueprintResponse,
     TestBlueprintUpdate,
 )
+from app.questions.validation import InvalidCorrectAnswer, resolve_correct_answer_text
 
 router = APIRouter(tags=["questions"])
 
@@ -99,6 +100,15 @@ def create_question(
 ) -> Question:
     if db.get(QuestionBank, bank_id) is None:
         raise HTTPException(status_code=404, detail="Question bank not found")
+
+    # correct_answer is optional (a question can be created without one), but
+    # if it's given, it must actually resolve — reject here rather than let a
+    # bad value silently shrink Test A's selection pool later.
+    if payload.correct_answer is not None:
+        try:
+            resolve_correct_answer_text(payload.options or [], payload.correct_answer)
+        except InvalidCorrectAnswer as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     question = Question(bank_id=bank_id, **payload.model_dump())
     db.add(question)

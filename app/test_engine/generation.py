@@ -4,6 +4,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.models.stage3_test_a import Question, QuestionBank, TestBlueprint
+from app.questions.validation import InvalidCorrectAnswer, resolve_correct_answer_text
 
 
 class NoTestBlueprintConfigured(Exception):
@@ -11,38 +12,31 @@ class NoTestBlueprintConfigured(Exception):
 
 
 class InsufficientQuestions(Exception):
-    """A blueprint category doesn't have enough gradeable questions available."""
+    """A blueprint category doesn't have enough questions available."""
 
 
-def _resolve_correct_text(question: Question) -> str | None:
-    """Resolves a question's correct_answer into the actual option text.
-
-    There's no enforced contract on what correct_answer holds — the
-    single-question-create endpoint accepts any freeform string, and the CSV
-    bulk-upload path has been used with single-letter labels (A/B/C/D as a
-    1-indexed position). Both are handled: an exact match against the option
-    text wins first, falling back to treating a single letter as a position.
-    Returns None if neither resolves — such a question is unresolvable and
-    must not be served to a candidate (see _gradeable_pool below).
-    """
-    options = question.options or []
-    correct_answer = (question.correct_answer or "").strip()
-    if not correct_answer:
-        return None
-    if correct_answer in options:
-        return correct_answer
-    if len(correct_answer) == 1 and correct_answer.isalpha():
-        index = ord(correct_answer.upper()) - ord("A")
-        if 0 <= index < len(options):
-            return options[index]
-    return None
+class MalformedQuestion(Exception):
+    """A question's correct_answer doesn't resolve against its options."""
 
 
-def _gradeable_pool(db: Session, program_id: uuid.UUID, category: str) -> list[Question]:
-    """All questions in a category whose correct_answer actually resolves to
-    one of their options. Ungradeable questions (malformed correct_answer,
-    missing options) are excluded from selection entirely rather than served
-    to a candidate and silently scored wrong no matter what they pick.
+def _resolved_category_pool(
+    db: Session, program_id: uuid.UUID, category: str
+) -> list[tuple[Question, str]]:
+    """Every question in a category that has a correct_answer set, each
+    paired with its resolved correct answer text.
+
+    A question with no correct_answer at all (still a valid, optional state —
+    e.g. a draft not yet finished) is silently excluded here, same as before:
+    it's just not eligible for selection, not an error. A question WITH a
+    correct_answer that doesn't actually resolve against its options is a
+    different case — that's malformed data, not an intentional gap, so it's
+    validated up front across the WHOLE pool rather than only the questions
+    that happen to get randomly selected (checking only sampled questions
+    would make test-start success depend on random luck, which is a
+    confusing thing for an admin to debug — "it worked yesterday").  Raises
+    MalformedQuestion identifying the exact question (id + bank) on the
+    first one that doesn't resolve, so it gets fixed instead of quietly
+    shrinking the pool.
     """
     pool = (
         db.query(Question)
@@ -50,7 +44,24 @@ def _gradeable_pool(db: Session, program_id: uuid.UUID, category: str) -> list[Q
         .filter(QuestionBank.program_id == program_id, Question.category == category)
         .all()
     )
-    return [q for q in pool if _resolve_correct_text(q) is not None]
+
+    resolved = []
+    for question in pool:
+        if not (question.correct_answer or "").strip():
+            continue
+
+        try:
+            correct_text = resolve_correct_answer_text(
+                question.options or [], question.correct_answer
+            )
+        except InvalidCorrectAnswer as exc:
+            raise MalformedQuestion(
+                f"Question {question.id} in bank {question.bank_id} has an "
+                f"invalid correct_answer: {exc}"
+            ) from exc
+        resolved.append((question, correct_text))
+
+    return resolved
 
 
 def build_generated_questions(
@@ -62,8 +73,8 @@ def build_generated_questions(
     category, e.g. quant + verbal as separate sections) — this combines all
     of them into a single session: total duration is the sum of every
     blueprint's duration_minutes, and the combined question set draws
-    question_count gradeable questions from each blueprint's category, then
-    shuffles the overall question order across categories.
+    question_count questions from each blueprint's category, then shuffles
+    the overall question order across categories.
 
     Returns (generated_questions, total_duration_minutes). Each entry in
     generated_questions is {question_id, question_text, options,
@@ -73,8 +84,8 @@ def build_generated_questions(
     that grading later never has to trust anything that could have changed
     since generation.
 
-    Raises NoTestBlueprintConfigured / InsufficientQuestions; callers turn
-    these into HTTP errors.
+    Raises NoTestBlueprintConfigured / InsufficientQuestions / MalformedQuestion;
+    callers turn these into HTTP errors.
     """
     blueprints = db.query(TestBlueprint).filter(TestBlueprint.program_id == program_id).all()
     if not blueprints:
@@ -86,16 +97,15 @@ def build_generated_questions(
     for blueprint in blueprints:
         total_duration_minutes += blueprint.duration_minutes
 
-        pool = _gradeable_pool(db, program_id, blueprint.category)
-        if len(pool) < blueprint.question_count:
+        resolved_pool = _resolved_category_pool(db, program_id, blueprint.category)
+        if len(resolved_pool) < blueprint.question_count:
             raise InsufficientQuestions(
                 f"Category '{blueprint.category}' needs {blueprint.question_count} "
-                f"gradeable questions but only {len(pool)} are available"
+                f"questions but only {len(resolved_pool)} are available"
             )
-        selected = random.sample(pool, blueprint.question_count)
+        selected = random.sample(resolved_pool, blueprint.question_count)
 
-        for question in selected:
-            correct_text = _resolve_correct_text(question)
+        for question, correct_text in selected:
             shuffled_options = list(question.options or [])
             random.shuffle(shuffled_options)
             correct_index = shuffled_options.index(correct_text)
