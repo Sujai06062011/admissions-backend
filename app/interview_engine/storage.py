@@ -43,3 +43,14 @@ def save_recording(application_id: uuid.UUID, upload: UploadFile) -> str:
 def download_recording(object_path: str) -> bytes:
     """Downloads a recording's raw bytes from the Supabase 'recordings' bucket."""
     return _get_client().storage.from_(RECORDINGS_BUCKET).download(object_path)
+
+
+def create_recording_signed_url(object_path: str, expires_in: int) -> str:
+    """Generates a temporary signed URL for a private 'recordings' bucket
+    object, valid for expires_in seconds — same pattern as
+    app/applications/storage.py's create_document_signed_url.
+    """
+    response = _get_client().storage.from_(RECORDINGS_BUCKET).create_signed_url(
+        object_path, expires_in
+    )
+    return response["signedURL"]

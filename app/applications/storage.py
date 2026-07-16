@@ -37,3 +37,15 @@ def save_upload(application_id: uuid.UUID, upload: UploadFile) -> str:
     )
 
     return object_path
+
+
+def create_document_signed_url(object_path: str, expires_in: int) -> str:
+    """Generates a temporary signed URL for a private 'documents' bucket
+    object, valid for expires_in seconds. This is the only way to actually
+    fetch a file back out of the bucket — plain object paths (what's stored
+    as file_url) aren't reachable without one.
+    """
+    response = _get_client().storage.from_(DOCUMENTS_BUCKET).create_signed_url(
+        object_path, expires_in
+    )
+    return response["signedURL"]
