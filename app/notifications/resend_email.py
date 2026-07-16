@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import resend
 
@@ -18,6 +18,7 @@ def send_invite_email(
     applicant_name: str | None,
     program_name: str,
     applied_at: datetime,
+    campus_date: date,
     temp_username: str,
     temp_password: str,
     expires_at: datetime,
@@ -29,10 +30,12 @@ def send_invite_email(
     return value to set Notification.status, so a delivery failure shouldn't
     blow up the request that triggered it.
 
-    Deliberately leaves out campus test date/time and address: neither has real
-    data behind it yet (no CampusSession is created on this transition, and
-    there's no address field anywhere in the schema), and this email goes to
-    real applicants, so it shouldn't show placeholder/fake values.
+    campus_date is the real assigned CampusSchedule.session_date — shown as a
+    date only, no clock time, since CampusSchedule doesn't carry a time-of-day
+    and CampusSession.slot_time isn't populated by the assignment logic. Still
+    deliberately leaves out a campus address: there's no such field anywhere in
+    the schema, and this email goes to real applicants, so it shouldn't show a
+    fabricated value.
     """
     if not to_email:
         return False, "applicant has no email address on file"
@@ -46,7 +49,8 @@ def send_invite_email(
         f"<p>Dear {greeting_name},</p>"
         f"<p><b>Program Applied For:</b> {program_name}<br>"
         f"<b>Applied On:</b> {_format_ist(applied_at)}<br>"
-        f"<b>Current Status:</b> Your application has moved to the next stage.</p>"
+        f"<b>Current Status:</b> Your application has moved to the next stage.<br>"
+        f"<b>Campus Test Date:</b> {campus_date.strftime('%d %b %Y')}</p>"
         "<p>Use the credentials below to log in and take your test.</p>"
         f"<p><b>Username:</b> {temp_username}<br>"
         f"<b>Password:</b> {temp_password}</p>"

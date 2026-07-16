@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.campus.assignment import CampusFullyBooked, NoCampusSchedulesConfigured, assign_campus_session
 from app.credentials.generation import generate_credentials
 from app.db.session import get_db
 from app.models.core import AdminUser, Program
@@ -134,8 +135,21 @@ def create_admin_decision(
     _apply_status_transition(application, payload.stage, payload.decision)
 
     if application.status == "moved_to_campus":
+        try:
+            campus_session = assign_campus_session(db, application)
+        except NoCampusSchedulesConfigured:
+            raise HTTPException(
+                status_code=404,
+                detail="No campus schedules configured for this program yet — add campus dates before moving applications to campus",
+            )
+        except CampusFullyBooked:
+            raise HTTPException(
+                status_code=409,
+                detail="All campus schedules for this program are fully booked — add more dates",
+            )
+
         credential, plaintext_password = generate_credentials(db, application)
-        send_campus_invite(db, application, credential, plaintext_password)
+        send_campus_invite(db, application, credential, plaintext_password, campus_session)
 
     db.commit()
     db.refresh(decision)

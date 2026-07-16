@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.models.final import Notification
+from app.models.scheduling import CampusSession
 from app.models.stage1 import Application
 from app.models.stage3_test_a import Credential
 from app.notifications.resend_email import send_invite_email
@@ -8,12 +9,17 @@ from app.notifications.whatsapp_stub import send_invite_whatsapp
 
 
 def send_campus_invite(
-    db: Session, application: Application, credential: Credential, temp_password: str
+    db: Session,
+    application: Application,
+    credential: Credential,
+    temp_password: str,
+    campus_session: CampusSession,
 ) -> list[Notification]:
-    """Sends the move-to-campus invite (temp login credentials) over email and
-    WhatsApp, creates one Notification row per channel reflecting real delivery
-    status, and updates credential.delivered_via to the channels that actually
-    succeeded. Does not commit; the caller owns the transaction.
+    """Sends the move-to-campus invite (temp login credentials + real assigned
+    campus date) over email and WhatsApp, creates one Notification row per
+    channel reflecting real delivery status, and updates
+    credential.delivered_via to the channels that actually succeeded. Does not
+    commit; the caller owns the transaction.
     """
     applicant = application.applicant
     notifications: list[Notification] = []
@@ -24,6 +30,7 @@ def send_campus_invite(
         applicant_name=applicant.full_name if applicant else None,
         program_name=application.program.name,
         applied_at=application.created_at,
+        campus_date=campus_session.schedule.session_date,
         temp_username=credential.temp_username,
         temp_password=temp_password,
         expires_at=credential.expires_at,
