@@ -14,7 +14,7 @@ ApplicationStatus = Literal[
     "rejected",
 ]
 
-DocType = Literal["resume", "10th_marksheet", "12th_marksheet", "ug_marksheet"]
+DocType = Literal["resume", "10th_marksheet", "12th_marksheet", "ug_marksheet", "pg_marksheet"]
 
 
 # --- Applicant ---
