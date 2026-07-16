@@ -7,6 +7,7 @@ from app.dashboard.router import router as dashboard_router
 from app.interview_engine.router import router as interview_engine_router
 from app.preferences.router import router as preferences_router
 from app.questions.router import router as questions_router
+from app.test_engine.router import router as test_engine_router
 
 app = FastAPI()
 app.include_router(applications_router)
@@ -16,6 +17,7 @@ app.include_router(credentials_router)
 app.include_router(campus_router)
 app.include_router(interview_engine_router)
 app.include_router(dashboard_router)
+app.include_router(test_engine_router)
 
 
 @app.get("/health")
