@@ -39,6 +39,11 @@ def save_upload(application_id: uuid.UUID, upload: UploadFile) -> str:
     return object_path
 
 
+def download_document(object_path: str) -> bytes:
+    """Downloads a document's raw bytes from the Supabase 'documents' bucket."""
+    return _get_client().storage.from_(DOCUMENTS_BUCKET).download(object_path)
+
+
 def create_document_signed_url(object_path: str, expires_in: int) -> str:
     """Generates a temporary signed URL for a private 'documents' bucket
     object, valid for expires_in seconds. This is the only way to actually
