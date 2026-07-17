@@ -64,6 +64,46 @@ def list_preference_configs(
     )
 
 
+@router.put(
+    "/programs/{program_id}/preference-configs",
+    response_model=list[PreferenceConfigResponse],
+)
+def replace_preference_configs(
+    program_id: uuid.UUID,
+    payload: list[PreferenceConfigCreate],
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> list[PreferenceConfig]:
+    """Atomically replaces every PreferenceConfig row for this program.
+
+    There's no per-row PATCH: compute_preference_match sums every matching
+    row for a field_name with no dedup, so editing in place by deleting +
+    recreating the full set (rather than adding alongside old rows) is the
+    only way to change weights without double-counting a field for every
+    applicant. Existing applications are re-scored immediately afterwards so
+    the new weights are reflected right away, not just for future
+    submissions.
+    """
+    if db.get(Program, program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    db.query(PreferenceConfig).filter(PreferenceConfig.program_id == program_id).delete(
+        synchronize_session=False
+    )
+    configs = [PreferenceConfig(program_id=program_id, **item.model_dump()) for item in payload]
+    db.add_all(configs)
+    db.flush()
+
+    applications = db.query(Application).filter(Application.program_id == program_id).all()
+    for application in applications:
+        compute_preference_match(db, application)
+
+    db.commit()
+    for config in configs:
+        db.refresh(config)
+    return configs
+
+
 @router.post(
     "/applications/{application_id}/compute-match",
     response_model=PreferenceMatchResultResponse,

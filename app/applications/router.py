@@ -10,6 +10,7 @@ from app.applications.storage import save_upload
 from app.db.session import get_db
 from app.models.core import Program, Tenant
 from app.models.stage1 import Applicant, Application, ProfileData, UploadedDocument
+from app.preferences.matching import compute_preference_match
 from app.schemas.stage1 import (
     ApplicantResponse,
     ApplicationResponse,
@@ -132,6 +133,13 @@ def update_application_profile(
         raise HTTPException(status_code=404, detail="Profile data not found")
 
     profile_data.data = payload.data
+    db.flush()
+
+    # Score against the program's PreferenceConfig immediately so hard-pass /
+    # composite_score are available as soon as the candidate confirms &
+    # submits, rather than only after an admin manually calls compute-match.
+    compute_preference_match(db, application)
+
     db.commit()
     db.refresh(profile_data)
 
