@@ -5,12 +5,43 @@ from sqlalchemy.orm import Session
 from app.models.stage1 import Application
 from app.models.stage2 import PreferenceConfig, PreferenceMatchResult
 
+# Fields sourced from live session tables rather than the static profile_data
+# JSON blob — they only exist once the candidate reaches that stage, which is
+# exactly what lets the composite score grow progressively (screening ->
+# campus test -> campus interview) as each becomes available.
+SESSION_SOURCED_FIELDS = {"test_a_score", "test_b_score"}
+
 
 def _numeric(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return float(value)
+    return None
+
+
+def normalized_test_b_score(rubric_score: dict | None) -> float | None:
+    """Test B's rubric (grammar/fluency/reasoning/coherence) is scored 0-10
+    per dimension, while Test A is a 0-100 percentage. Averaging the rubric
+    without rescaling would make Test B contribute ~10x less than intended
+    for the same configured weight, so the average is scaled onto the same
+    0-100 range Test A uses before either is fed into the composite formula.
+    """
+    if not rubric_score:
+        return None
+    values = [v for v in rubric_score.values() if isinstance(v, (int, float))]
+    return (sum(values) / len(values)) * 10 if values else None
+
+
+def _session_sourced_actual(application: Application, field_name: str) -> float | None:
+    if field_name == "test_a_score":
+        return _numeric(application.test_a_session.score) if application.test_a_session else None
+    if field_name == "test_b_score":
+        return (
+            normalized_test_b_score(application.test_b_session.rubric_score)
+            if application.test_b_session
+            else None
+        )
     return None
 
 
@@ -26,6 +57,11 @@ def compute_preference_match(db: Session, application: Application) -> Preferenc
     - reasons has one entry per config: {field, expected, actual, passed}. For
       hard-cutoff fields, passed means the cutoff was met. For soft-only fields (no
       cutoff), passed means the field was present and numeric in the profile data.
+    - test_a_score/test_b_score are read live from the TestASession/TestBSession
+      relationships rather than profile_data — they're None until the candidate
+      actually reaches that stage, so the composite score is whatever's available
+      at call time and is expected to be recomputed again as later stages complete
+      (see submit_test_a_session and process_interview_recording).
 
     Persists onto the application's existing PreferenceMatchResult row (creating one
     if absent) but does not commit — callers own the transaction.
@@ -42,7 +78,10 @@ def compute_preference_match(db: Session, application: Application) -> Preferenc
     composite_score = 0.0
 
     for config in configs:
-        raw_actual = profile_data.get(config.field_name)
+        if config.field_name in SESSION_SOURCED_FIELDS:
+            raw_actual = _session_sourced_actual(application, config.field_name)
+        else:
+            raw_actual = profile_data.get(config.field_name)
         actual = _numeric(raw_actual)
 
         if config.is_hard_cutoff:

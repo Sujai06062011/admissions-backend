@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.stage1 import Application
 from app.models.stage3_test_a import TestASession, TestBlueprint
+from app.preferences.matching import compute_preference_match
 from app.test_engine.generation import (
     InsufficientQuestions,
     MalformedQuestion,
@@ -154,6 +155,11 @@ def submit_test_a_session(
     session.answers = {str(k): v for k, v in payload.answers.items()}
     session.score = score
     session.submitted_at = submitted_at
+    db.flush()
+
+    # Re-score against PreferenceConfig now that test_a_score is available —
+    # the composite score progressively picks up each stage as it completes.
+    compute_preference_match(db, session.application)
 
     db.commit()
     db.refresh(session)

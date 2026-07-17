@@ -18,6 +18,7 @@ from app.interview_engine.storage import create_recording_signed_url
 from app.models.core import Program
 from app.models.stage1 import Application, UploadedDocument
 from app.models.stage3_test_b import TestBSession
+from app.preferences.matching import normalized_test_b_score
 from app.schemas.stage1 import ApplicantResponse, ApplicationResponse, ProfileDataResponse, UploadedDocumentResponse
 from app.schemas.stage2 import AdminDecisionResponse, PreferenceMatchResultResponse
 from app.schemas.stage3 import TestASessionResponse, TestBSessionResponse
@@ -38,13 +39,6 @@ def get_funnel(program_id: uuid.UUID, db: Session = Depends(get_db)) -> FunnelRe
 
 
 # --- Candidate list ---
-
-
-def _test_b_average(rubric_score: dict | None) -> float | None:
-    if not rubric_score:
-        return None
-    values = [v for v in rubric_score.values() if isinstance(v, (int, float))]
-    return sum(values) / len(values) if values else None
 
 
 @router.get("/candidates", response_model=list[CandidateListItem])
@@ -84,7 +78,7 @@ def list_candidates(
                     else None
                 ),
                 test_a_score=app.test_a_session.score if app.test_a_session else None,
-                test_b_score=_test_b_average(
+                test_b_score=normalized_test_b_score(
                     app.test_b_session.rubric_score if app.test_b_session else None
                 ),
             )

@@ -8,6 +8,7 @@ from app.interview_engine.scoring import score_transcript
 from app.interview_engine.storage import download_recording
 from app.interview_engine.transcription import transcribe_audio
 from app.models.stage3_test_b import TestBSession
+from app.preferences.matching import compute_preference_match
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,12 @@ def process_interview_recording(application_id: str) -> None:
         session.transcript = transcript
         session.rubric_score = rubric_score
         session.rationale = rationale
+        db.flush()
+
+        # Re-score against PreferenceConfig now that test_b_score is
+        # available — completes the composite score's final stage.
+        compute_preference_match(db, session.application)
+
         db.commit()
         logger.info("Interview scoring complete for application_id=%s", application_id)
     except Exception:
