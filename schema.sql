@@ -54,6 +54,7 @@ create table applications (
   status text not null default 'submitted',
   -- submitted -> under_review -> moved_to_campus -> testing_complete
   -- -> called_for_interview -> offered / rejected
+  sequence_number integer not null,  -- 1-based, unique per program_id; assigned under a row lock on the program
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -238,6 +239,7 @@ create table notifications (
 create index idx_applications_tenant on applications(tenant_id);
 create index idx_applications_program on applications(program_id);
 create index idx_applications_status on applications(status);
+create unique index idx_applications_program_sequence on applications(program_id, sequence_number);
 create index idx_questions_bank_category on questions(bank_id, category);
 create index idx_prompts_bank on prompts(bank_id);
 

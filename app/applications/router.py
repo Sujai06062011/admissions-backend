@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.applications.schemas import ApplicationProfileResponse
@@ -30,9 +31,23 @@ def create_application(
     if db.get(Tenant, payload.tenant_id) is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    program = db.get(Program, payload.program_id)
+    # Locks the program row so concurrent signups for the same program are
+    # serialized here, giving each one a distinct, gap-tolerant sequence
+    # number instead of racing on a MAX() read.
+    program = (
+        db.query(Program)
+        .filter(Program.id == payload.program_id)
+        .with_for_update()
+        .first()
+    )
     if program is None or program.tenant_id != payload.tenant_id:
         raise HTTPException(status_code=404, detail="Program not found for tenant")
+
+    next_sequence_number = (
+        db.query(func.coalesce(func.max(Application.sequence_number), 0))
+        .filter(Application.program_id == payload.program_id)
+        .scalar()
+    ) + 1
 
     applicant = Applicant(**payload.applicant.model_dump())
     db.add(applicant)
@@ -42,6 +57,7 @@ def create_application(
         tenant_id=payload.tenant_id,
         program_id=payload.program_id,
         applicant_id=applicant.id,
+        sequence_number=next_sequence_number,
     )
     db.add(application)
     db.flush()

@@ -75,6 +75,7 @@ class ApplicationResponse(BaseModel):
     program_id: uuid.UUID
     applicant_id: uuid.UUID
     status: ApplicationStatus
+    sequence_number: int
     created_at: datetime | None
     updated_at: datetime | None
 

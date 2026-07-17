@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, List
 
-from sqlalchemy import ForeignKey, Index, Numeric, Text, text
+from sqlalchemy import ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +29,7 @@ class Application(Base):
         Index("idx_applications_tenant", "tenant_id"),
         Index("idx_applications_program", "program_id"),
         Index("idx_applications_status", "status"),
+        UniqueConstraint("program_id", "sequence_number", name="idx_applications_program_sequence"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -44,6 +45,7 @@ class Application(Base):
         UUID(as_uuid=True), ForeignKey("applicants.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'submitted'"))
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
 
