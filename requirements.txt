@@ -5,6 +5,7 @@ psycopg2-binary
 supabase
 python-multipart
 bcrypt
+pyjwt
 resend
 groq
 anthropic

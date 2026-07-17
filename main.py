@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.applications.router import router as applications_router
+from app.auth.router import router as auth_router
 from app.campus.router import router as campus_router
 from app.credentials.router import router as credentials_router
 from app.dashboard.router import router as dashboard_router
@@ -24,6 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(applications_router)
+app.include_router(auth_router)
 app.include_router(preferences_router)
 app.include_router(questions_router)
 app.include_router(credentials_router)

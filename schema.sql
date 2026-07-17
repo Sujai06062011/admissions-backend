@@ -31,6 +31,7 @@ create table admin_users (
   email text unique not null,
   full_name text,
   role text not null default 'admin',   -- admin, reviewer, super_admin
+  password_hash text,   -- bcrypt; null until a password is set (no self-serve reset yet)
   created_at timestamptz default now()
 );
 

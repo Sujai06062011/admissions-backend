@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_admin
 from app.db.session import get_db
 from app.final_interview.schemas import (
     CallForInterviewRequest,
@@ -22,7 +23,9 @@ router = APIRouter(tags=["final_interview"])
 
 @router.post("/call-for-interview", response_model=CallForInterviewResponse, status_code=201)
 def call_for_interview(
-    payload: CallForInterviewRequest, db: Session = Depends(get_db)
+    payload: CallForInterviewRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
 ) -> CallForInterviewResponse:
     """Marks one or more applications as called for interview: upserts a
     FinalDecision row (decision='called_for_interview'), advances
@@ -30,16 +33,13 @@ def call_for_interview(
     (status='pending', not yet scheduled) so it's ready for the schedule
     endpoint below.
 
-    A single shared decided_by covers the whole batch — this is one admin
-    acting on a set of applications, not a per-application field. Invalid
-    individual application_ids don't abort the batch: each gets its own
-    success/failure result so 49 good IDs aren't blocked by 1 bad one.
-    Re-calling an already-called application is idempotent (just refreshes
-    decided_at/decided_by), not an error.
+    A single shared decided_by (the authenticated admin) covers the whole
+    batch — this is one admin acting on a set of applications, not a
+    per-application field. Invalid individual application_ids don't abort
+    the batch: each gets its own success/failure result so 49 good IDs
+    aren't blocked by 1 bad one. Re-calling an already-called application is
+    idempotent (just refreshes decided_at/decided_by), not an error.
     """
-    if payload.decided_by is not None and db.get(AdminUser, payload.decided_by) is None:
-        raise HTTPException(status_code=404, detail="Admin user not found")
-
     results: list[CallForInterviewResult] = []
     now = datetime.now(timezone.utc)
 
@@ -58,7 +58,7 @@ def call_for_interview(
             decision = FinalDecision(application_id=application_id)
             db.add(decision)
         decision.decision = "called_for_interview"
-        decision.decided_by = payload.decided_by
+        decision.decided_by = admin.id
         decision.decided_at = now
 
         application.status = "called_for_interview"

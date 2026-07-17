@@ -58,6 +58,10 @@ class AdminUser(Base):
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'admin'"))
+    # Nullable: an admin row can exist (e.g. seeded) before a password is set.
+    # Login must reject rows where this is null rather than treating "no
+    # password set" as "any password works."
+    password_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
 
     tenant: Mapped["Tenant"] = relationship(back_populates="admin_users")

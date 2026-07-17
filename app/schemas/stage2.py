@@ -35,7 +35,6 @@ class AdminDecisionCreate(BaseModel):
     application_id: uuid.UUID
     stage: DecisionStage
     decision: DecisionOutcome
-    decided_by: uuid.UUID | None = None
     notes: str | None = None
 
 

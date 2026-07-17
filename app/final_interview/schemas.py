@@ -6,7 +6,6 @@ from pydantic import BaseModel
 
 class CallForInterviewRequest(BaseModel):
     application_ids: list[uuid.UUID]
-    decided_by: uuid.UUID | None = None
 
 
 class CallForInterviewResult(BaseModel):

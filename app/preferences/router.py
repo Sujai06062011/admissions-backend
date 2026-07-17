@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_admin
 from app.campus.assignment import CampusFullyBooked, NoCampusSchedulesConfigured, assign_campus_session
 from app.credentials.generation import generate_credentials
 from app.db.session import get_db
@@ -120,16 +121,15 @@ def list_applications_with_match_results(
 
 @router.post("/admin-decisions", response_model=AdminDecisionResponse, status_code=201)
 def create_admin_decision(
-    payload: AdminDecisionCreate, db: Session = Depends(get_db)
+    payload: AdminDecisionCreate,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
 ) -> AdminDecision:
     application = db.get(Application, payload.application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    if payload.decided_by is not None and db.get(AdminUser, payload.decided_by) is None:
-        raise HTTPException(status_code=404, detail="Admin user not found")
-
-    decision = AdminDecision(**payload.model_dump())
+    decision = AdminDecision(**payload.model_dump(), decided_by=admin.id)
     db.add(decision)
 
     _apply_status_transition(application, payload.stage, payload.decision)
