@@ -1,4 +1,7 @@
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.applications.router import router as applications_router
 from app.campus.router import router as campus_router
@@ -11,6 +14,15 @@ from app.questions.router import router as questions_router
 from app.test_engine.router import router as test_engine_router
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(applications_router)
 app.include_router(preferences_router)
 app.include_router(questions_router)

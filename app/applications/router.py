@@ -15,6 +15,7 @@ from app.schemas.stage1 import (
     ApplicationSubmissionResponse,
     DocType,
     ProfileDataResponse,
+    ProfileDataUpdate,
     UploadedDocumentResponse,
 )
 from workers.ocr_jobs import enqueue_ocr_job
@@ -94,6 +95,25 @@ def upload_document(
     enqueue_ocr_job(background_tasks, str(document.id))
 
     return document
+
+
+@router.patch("/{application_id}/profile", response_model=ProfileDataResponse)
+def update_application_profile(
+    application_id: uuid.UUID, payload: ProfileDataUpdate, db: Session = Depends(get_db)
+) -> ProfileDataResponse:
+    application = db.get(Application, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    profile_data = db.get(ProfileData, application_id)
+    if profile_data is None:
+        raise HTTPException(status_code=404, detail="Profile data not found")
+
+    profile_data.data = payload.data
+    db.commit()
+    db.refresh(profile_data)
+
+    return ProfileDataResponse.model_validate(profile_data)
 
 
 @router.get("/{application_id}", response_model=ApplicationProfileResponse)

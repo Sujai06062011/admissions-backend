@@ -44,6 +44,10 @@ class ProfileDataSubmit(BaseModel):
     form_template_version: str | None = None
 
 
+class ProfileDataUpdate(BaseModel):
+    data: dict[str, Any]
+
+
 class ProfileDataResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
