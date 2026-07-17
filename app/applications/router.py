@@ -1,11 +1,17 @@
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.applications.numbering import build_application_number
-from app.applications.schemas import ApplicationProfileResponse
+from app.applications.schemas import (
+    ApplicationProfileResponse,
+    CandidateStatusResponse,
+    CandidateTestAStatus,
+    CandidateTestBStatus,
+)
 from app.applications.storage import save_upload
 from app.db.session import get_db
 from app.models.core import Program, Tenant
@@ -21,6 +27,7 @@ from app.schemas.stage1 import (
     ProfileDataUpdate,
     UploadedDocumentResponse,
 )
+from app.test_engine.router import _is_expired, _total_duration_minutes
 from workers.ocr_jobs import enqueue_ocr_job
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -175,4 +182,57 @@ def get_application_profile(
             UploadedDocumentResponse.model_validate(doc)
             for doc in application.uploaded_documents
         ],
+    )
+
+
+@router.get("/{application_id}/candidate-status", response_model=CandidateStatusResponse)
+def get_candidate_status(
+    application_id: uuid.UUID, db: Session = Depends(get_db)
+) -> CandidateStatusResponse:
+    """Coarse ApplicationStatus alone can't tell the /campus portal whether to
+    route a candidate into Test A or Test B next — "moved_to_campus" covers
+    both. This reads the actual TestASession/TestBSession/CampusSession rows
+    so the portal can show real per-stage state without a side-effecting call
+    (starting test-a-session/start again while one is already in progress
+    raises a 409).
+    """
+    application = (
+        db.query(Application)
+        .options(
+            selectinload(Application.test_a_session),
+            selectinload(Application.test_b_session),
+            selectinload(Application.campus_session),
+        )
+        .filter(Application.id == application_id)
+        .first()
+    )
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    test_a_session = application.test_a_session
+    test_a_in_progress = False
+    test_a_expires_at = None
+    if test_a_session is not None and test_a_session.submitted_at is None:
+        duration_minutes = _total_duration_minutes(db, application.program_id)
+        if duration_minutes:
+            test_a_expires_at = test_a_session.started_at + timedelta(minutes=duration_minutes)
+            test_a_in_progress = not _is_expired(test_a_session, duration_minutes)
+
+    test_b_session = application.test_b_session
+
+    return CandidateStatusResponse(
+        application_id=application.id,
+        program_id=application.program_id,
+        status=application.status,
+        campus_session_assigned=application.campus_session is not None,
+        test_a=CandidateTestAStatus(
+            submitted=test_a_session is not None and test_a_session.submitted_at is not None,
+            score=test_a_session.score if test_a_session else None,
+            in_progress=test_a_in_progress,
+            expires_at=test_a_expires_at,
+        ),
+        test_b=CandidateTestBStatus(
+            submitted=test_b_session is not None and test_b_session.recorded_at is not None,
+            recorded_at=test_b_session.recorded_at if test_b_session else None,
+        ),
     )
