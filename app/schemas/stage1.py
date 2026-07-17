@@ -14,7 +14,17 @@ ApplicationStatus = Literal[
     "rejected",
 ]
 
-DocType = Literal["resume", "10th_marksheet", "12th_marksheet", "ug_marksheet", "pg_marksheet", "certifications"]
+DocType = Literal[
+    "resume",
+    "10th_marksheet",
+    "12th_marksheet",
+    "ug_marksheet",
+    "pg_marksheet",
+    "certifications",
+    "address_proof",
+    "id_proof",
+    "experience_certificate",
+]
 
 
 # --- Applicant ---
@@ -76,6 +86,7 @@ class ApplicationResponse(BaseModel):
     applicant_id: uuid.UUID
     status: ApplicationStatus
     sequence_number: int
+    application_number: str
     created_at: datetime | None
     updated_at: datetime | None
 

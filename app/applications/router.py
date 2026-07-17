@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
+from app.applications.numbering import build_application_number
 from app.applications.schemas import ApplicationProfileResponse
 from app.applications.storage import save_upload
 from app.db.session import get_db
@@ -53,11 +54,16 @@ def create_application(
     db.add(applicant)
     db.flush()
 
+    application_number = build_application_number(
+        applicant.full_name, payload.profile.data.get("dob"), next_sequence_number
+    )
+
     application = Application(
         tenant_id=payload.tenant_id,
         program_id=payload.program_id,
         applicant_id=applicant.id,
         sequence_number=next_sequence_number,
+        application_number=application_number,
     )
     db.add(application)
     db.flush()

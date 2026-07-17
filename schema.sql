@@ -55,6 +55,7 @@ create table applications (
   -- submitted -> under_review -> moved_to_campus -> testing_complete
   -- -> called_for_interview -> offered / rejected
   sequence_number integer not null,  -- 1-based, unique per program_id; assigned under a row lock on the program
+  application_number text not null,  -- human-readable, e.g. SUJA-170399-0013; derived from name+dob+sequence_number at creation
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

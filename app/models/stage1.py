@@ -46,6 +46,7 @@ class Application(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'submitted'"))
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    application_number: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
 
