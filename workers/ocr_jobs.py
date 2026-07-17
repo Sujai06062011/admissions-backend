@@ -6,7 +6,10 @@ from fastapi import BackgroundTasks
 from app.applications.storage import download_document
 from app.db.session import SessionLocal
 from app.models.stage1 import UploadedDocument
-from workers.claude_extraction import extract_structured_fields_via_claude
+from workers.claude_extraction import (
+    extract_certifications_via_claude,
+    extract_structured_fields_via_claude,
+)
 from workers.ocr_parsing import parse_marksheet_fields
 from workers.vision_ocr import PDF_CONTENT_TYPE, extract_text
 
@@ -22,13 +25,17 @@ def _parse_fields(raw_text: str, doc_type: str, confidence: float) -> dict:
     Marksheets have a predictable label/value layout, so a cheap regex parser
     works. Address/ID proofs vary too much in format (utility bill vs.
     Aadhaar vs. passport) for regex, so those go through Claude instead.
-    Everything else (resume, certifications, experience_certificate) has no
-    structured fields to extract — only the raw OCR text is kept.
+    Certifications can list an arbitrary number of credentials on one page,
+    so those get their own Claude list-extraction. Everything else (resume,
+    experience_certificate) has no structured fields to extract — only the
+    raw OCR text is kept.
     """
     if doc_type in _MARKSHEET_DOC_TYPES:
         return parse_marksheet_fields(raw_text, doc_type, confidence)
     if doc_type in _CLAUDE_EXTRACTED_DOC_TYPES:
         return extract_structured_fields_via_claude(raw_text, doc_type)
+    if doc_type == "certifications":
+        return extract_certifications_via_claude(raw_text)
     return {}
 
 
