@@ -159,6 +159,26 @@ def list_applications_with_match_results(
     ]
 
 
+@router.get("/admin-decisions", response_model=list[AdminDecisionResponse])
+def list_admin_decisions(
+    db: Session = Depends(get_db),
+    program_id: uuid.UUID | None = Query(None),
+    decision: Literal["approved", "rejected", "manual_override"] | None = Query(None),
+) -> list[AdminDecision]:
+    """Lets the frontend cross-reference which applications have a decision
+    of a given kind (e.g. manual_override, to highlight screening overrides
+    in the Applications table) without fetching each candidate's full
+    profile one at a time."""
+    query = db.query(AdminDecision)
+    if program_id is not None:
+        query = query.join(Application, AdminDecision.application_id == Application.id).filter(
+            Application.program_id == program_id
+        )
+    if decision is not None:
+        query = query.filter(AdminDecision.decision == decision)
+    return query.order_by(AdminDecision.decided_at.desc()).all()
+
+
 @router.post("/admin-decisions", response_model=AdminDecisionResponse, status_code=201)
 def create_admin_decision(
     payload: AdminDecisionCreate,
