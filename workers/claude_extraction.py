@@ -68,17 +68,16 @@ _MARKSHEET_TOOL = {
             "percentage": {
                 "type": ["string", "null"],
                 "description": (
-                    "Overall academic performance as a percentage (0-100), reported as a plain "
-                    "number in a string, e.g. '78.4'. If the document lists subject-wise or "
-                    "semester-wise marks (obtained vs. maximum) but never states an overall "
-                    "percentage outright, calculate it yourself as (total marks obtained ÷ total "
-                    "maximum marks) x 100 and give that computed number — this is expected, not "
-                    "guessing. If this is a degree/course-completion certificate with no marks "
-                    "table at all, and it instead states a result classification such as 'First "
-                    "Class', 'First Class with Distinction', 'Second Class', or 'Distinction', put "
-                    "that classification text here verbatim instead of a number. Null only if the "
-                    "document gives no percentage, no marks to calculate one from, and no "
-                    "classification wording. Never convert a CGPA into a percentage."
+                    "Only fill this in when the document ITSELF states an overall percentage "
+                    "outright, as plain text (e.g. '78.4'). If the document instead lists a "
+                    "subject-wise or semester-wise marks table with no stated overall percentage, "
+                    "leave this null and fill subject_marks below instead — do not add up the "
+                    "table yourself, that arithmetic belongs in subject_marks. If this is a "
+                    "degree/course-completion certificate with no marks table at all, and it "
+                    "states a result classification such as 'First Class', 'First Class with "
+                    "Distinction', 'Second Class', or 'Distinction', put that classification text "
+                    "here verbatim instead of a number, and leave subject_marks null. Null only if "
+                    "none of the above apply. Never convert a CGPA into a percentage."
                 ),
             },
             "cgpa": {
@@ -94,6 +93,31 @@ _MARKSHEET_TOOL = {
                 "type": ["integer", "null"],
                 "description": "The year of passing / graduation shown on the document.",
             },
+            "subject_marks": {
+                "type": ["array", "null"],
+                "description": (
+                    "Only fill this in when the document shows a subject-wise (or semester-wise) "
+                    "marks table AND does not already state its own overall percentage — leave it "
+                    "null otherwise (including when 'percentage' above was already filled in, or "
+                    "for a degree certificate with only a classification and no table). One entry "
+                    "per row that has an actual numeric mark; skip rows graded only as a letter "
+                    "('A', 'B'), or 'Pass'/'Fail' with no number — e.g. co-curricular or qualifying "
+                    "subjects that don't count toward the percentage. For each row, read the "
+                    "document's own printed 'Total' column for marks_obtained if there is one "
+                    "(don't re-derive it yourself from a Theory + Practical split — just read the "
+                    "printed total). max_marks is that subject's maximum, typically 100 unless the "
+                    "document states otherwise for that row."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {"type": "string"},
+                        "marks_obtained": {"type": ["number", "null"]},
+                        "max_marks": {"type": ["number", "null"]},
+                    },
+                    "required": ["subject", "marks_obtained", "max_marks"],
+                },
+            },
         },
         "required": [
             "name_on_certificate",
@@ -102,6 +126,7 @@ _MARKSHEET_TOOL = {
             "percentage",
             "cgpa",
             "year",
+            "subject_marks",
         ],
     },
 }
@@ -114,6 +139,8 @@ _MARKSHEET_FIELD_NAMES = [
     "cgpa",
     "year",
 ]
+
+_MARKSHEET_DOC_TYPES = {"10th_marksheet", "12th_marksheet", "ug_marksheet", "pg_marksheet"}
 
 _TOOLS_BY_DOC_TYPE: dict[str, tuple[dict, list[str]]] = {
     "address_proof": (_ADDRESS_TOOL, ["address_line1", "address_line2", "city", "state", "pincode"]),
@@ -160,6 +187,32 @@ _CERTIFICATIONS_TOOL = {
 }
 
 
+def _percentage_from_subject_marks(subject_marks: object) -> float | None:
+    """Sums a Claude-extracted subject-wise marks table and computes the
+    overall percentage with plain arithmetic in code, rather than asking the
+    model to add up a 5-6 row table itself — verified on a real sample
+    marksheet that model mental arithmetic undercounted the correct 89.5%
+    result as 87.4%. Extraction (reading an inconsistently laid-out table)
+    is what Claude is good at; summation is not something worth trusting it
+    for when it's this cheap to just do correctly.
+    """
+    if not isinstance(subject_marks, list) or not subject_marks:
+        return None
+    total_obtained = 0.0
+    total_max = 0.0
+    for entry in subject_marks:
+        if not isinstance(entry, dict):
+            continue
+        obtained = entry.get("marks_obtained")
+        max_marks = entry.get("max_marks")
+        if isinstance(obtained, (int, float)) and isinstance(max_marks, (int, float)) and max_marks > 0:
+            total_obtained += obtained
+            total_max += max_marks
+    if total_max <= 0:
+        return None
+    return round(total_obtained / total_max * 100, 2)
+
+
 def _build_prompt(doc_type: str, raw_text: str) -> str:
     kind = _DOC_KIND_DESCRIPTIONS.get(doc_type, "identity document")
     return f"""You are extracting structured fields from OCR text of a candidate's {kind}, submitted as part of a college admissions application.
@@ -171,7 +224,7 @@ OCR text:
 {raw_text}
 \"\"\"
 
-Extract the fields via the tool call, following each field's own description exactly — including any instruction to calculate a value from data present in the text (e.g. computing an overall percentage from a marks table). That's expected derivation, not guessing. If a field truly isn't present or computable from the text, submit null for it rather than guessing — a missing field the applicant can fill in manually is better than a wrong value presented as extracted."""
+Extract the fields via the tool call, following each field's own description exactly — read numbers straight off the document rather than doing arithmetic yourself (where a field asks for a computed value, a separate structured field is provided for the inputs to that computation instead). If a field truly isn't present in the text, submit null for it rather than guessing — a missing field the applicant can fill in manually is better than a wrong value presented as extracted."""
 
 
 def extract_structured_fields_via_claude(raw_text: str, doc_type: str) -> dict:
@@ -205,6 +258,12 @@ def extract_structured_fields_via_claude(raw_text: str, doc_type: str) -> dict:
         )
         tool_use = next(block for block in message.content if block.type == "tool_use")
         result = dict(tool_use.input)
+
+        if doc_type in _MARKSHEET_DOC_TYPES and not result.get("percentage"):
+            computed = _percentage_from_subject_marks(result.get("subject_marks"))
+            if computed is not None:
+                result["percentage"] = computed
+
         return {field: result.get(field) for field in fields}
     except Exception:
         logger.exception("Claude field extraction failed for doc_type %s", doc_type)
