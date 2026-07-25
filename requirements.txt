@@ -10,3 +10,4 @@ resend
 groq
 anthropic
 httpx
+openpyxl

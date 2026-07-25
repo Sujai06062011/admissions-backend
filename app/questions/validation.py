@@ -9,7 +9,7 @@ def resolve_correct_answer_text(options: list[str], correct_answer: str | None) 
     Accepts two conventions already in use across this codebase: an exact
     match against one of the option strings, or a single letter (A, B, C, ...)
     naming the option's 1-indexed-from-A position — this is how the CSV
-    bulk-upload path (app/questions/csv_import.py) has been used, while the
+    bulk-upload path (app/questions/bulk_import.py) has been used, while the
     single-question-create endpoint has no enforced convention at all.
 
     Raises InvalidCorrectAnswer if neither resolves.

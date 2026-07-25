@@ -1,12 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.core import Program
 from app.models.stage3_test_a import Question, QuestionBank, TestBlueprint
-from app.questions.csv_import import parse_questions_csv
+from app.questions.bulk_import import parse_questions_file
 from app.questions.schemas import (
     BulkUploadError,
     BulkUploadResult,
@@ -174,18 +174,26 @@ def delete_question(question_id: uuid.UUID, db: Session = Depends(get_db)) -> No
     status_code=201,
 )
 def bulk_upload_questions(
-    bank_id: uuid.UUID, file: UploadFile = File(...), db: Session = Depends(get_db)
+    bank_id: uuid.UUID,
+    file: UploadFile = File(...),
+    category: QuestionCategory | None = Form(
+        None,
+        description=(
+            "Default category applied to rows that have no category cell of "
+            "their own — lets a single-category .csv/.xlsx (no category "
+            "column) be uploaded without editing the file."
+        ),
+    ),
+    db: Session = Depends(get_db),
 ) -> BulkUploadResult:
     if db.get(QuestionBank, bank_id) is None:
         raise HTTPException(status_code=404, detail="Question bank not found")
 
     raw = file.file.read()
     try:
-        content = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=422, detail="CSV file must be UTF-8 encoded")
-
-    parsed, row_errors = parse_questions_csv(content)
+        parsed, row_errors = parse_questions_file(file.filename or "", raw, category)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     questions = [
         Question(
