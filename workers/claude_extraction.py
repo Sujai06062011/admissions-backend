@@ -66,17 +66,28 @@ _MARKSHEET_TOOL = {
                 ),
             },
             "percentage": {
-                "type": ["number", "null"],
+                "type": ["string", "null"],
                 "description": (
-                    "Overall percentage of marks obtained, on a 0-100 scale, if the document states "
-                    "one. Null if only a CGPA is given — never convert a CGPA into a percentage."
+                    "Overall academic performance as a percentage (0-100), reported as a plain "
+                    "number in a string, e.g. '78.4'. If the document lists subject-wise or "
+                    "semester-wise marks (obtained vs. maximum) but never states an overall "
+                    "percentage outright, calculate it yourself as (total marks obtained ÷ total "
+                    "maximum marks) x 100 and give that computed number — this is expected, not "
+                    "guessing. If this is a degree/course-completion certificate with no marks "
+                    "table at all, and it instead states a result classification such as 'First "
+                    "Class', 'First Class with Distinction', 'Second Class', or 'Distinction', put "
+                    "that classification text here verbatim instead of a number. Null only if the "
+                    "document gives no percentage, no marks to calculate one from, and no "
+                    "classification wording. Never convert a CGPA into a percentage."
                 ),
             },
             "cgpa": {
                 "type": ["number", "null"],
                 "description": (
-                    "Overall CGPA/GPA, if the document states one (commonly on a 0-10 or 0-4 scale). "
-                    "Null if only a percentage is given — never convert a percentage into a CGPA."
+                    "Overall CGPA/GPA (commonly on a 0-10 or 0-4 scale), including one that must be "
+                    "read off a results table rather than an explicit 'CGPA:' label. Null if the "
+                    "document only gives a percentage or a result classification instead — never "
+                    "convert a percentage into a CGPA."
                 ),
             },
             "year": {
@@ -160,7 +171,7 @@ OCR text:
 {raw_text}
 \"\"\"
 
-Extract the fields via the tool call. If a field isn't clearly present in the text, submit null for it rather than guessing — a missing field the applicant can fill in manually is better than a wrong value presented as extracted."""
+Extract the fields via the tool call, following each field's own description exactly — including any instruction to calculate a value from data present in the text (e.g. computing an overall percentage from a marks table). That's expected derivation, not guessing. If a field truly isn't present or computable from the text, submit null for it rather than guessing — a missing field the applicant can fill in manually is better than a wrong value presented as extracted."""
 
 
 def extract_structured_fields_via_claude(raw_text: str, doc_type: str) -> dict:
