@@ -10,28 +10,31 @@ from workers.claude_extraction import (
     extract_certifications_via_claude,
     extract_structured_fields_via_claude,
 )
-from workers.ocr_parsing import parse_marksheet_fields
 from workers.vision_ocr import PDF_CONTENT_TYPE, extract_text
 
 logger = logging.getLogger(__name__)
 
-_MARKSHEET_DOC_TYPES = {"10th_marksheet", "12th_marksheet", "ug_marksheet", "pg_marksheet"}
-_CLAUDE_EXTRACTED_DOC_TYPES = {"address_proof", "id_proof"}
+_CLAUDE_EXTRACTED_DOC_TYPES = {
+    "address_proof",
+    "id_proof",
+    "10th_marksheet",
+    "12th_marksheet",
+    "ug_marksheet",
+    "pg_marksheet",
+}
 
 
-def _parse_fields(raw_text: str, doc_type: str, confidence: float) -> dict:
+def _parse_fields(raw_text: str, doc_type: str) -> dict:
     """Routes to the right field extractor for a document's doc_type.
 
-    Marksheets have a predictable label/value layout, so a cheap regex parser
-    works. Address/ID proofs vary too much in format (utility bill vs.
-    Aadhaar vs. passport) for regex, so those go through Claude instead.
-    Certifications can list an arbitrary number of credentials on one page,
-    so those get their own Claude list-extraction. Everything else (resume,
-    experience_certificate) has no structured fields to extract — only the
-    raw OCR text is kept.
+    Marksheets, address proofs, and ID proofs all vary too much in layout
+    (a CBSE 10th marksheet vs. a university degree certificate; a utility
+    bill vs. an Aadhaar card) for a regex parser to handle reliably, so all
+    of those go through Claude. Certifications can list an arbitrary number
+    of credentials on one page, so those get their own Claude
+    list-extraction. Everything else (resume, experience_certificate) has no
+    structured fields to extract — only the raw OCR text is kept.
     """
-    if doc_type in _MARKSHEET_DOC_TYPES:
-        return parse_marksheet_fields(raw_text, doc_type, confidence)
     if doc_type in _CLAUDE_EXTRACTED_DOC_TYPES:
         return extract_structured_fields_via_claude(raw_text, doc_type)
     if doc_type == "certifications":
@@ -74,7 +77,7 @@ def process_document_ocr(document_id: str) -> None:
             logger.exception("OCR job failed for document %s", document_id)
             return
 
-        parsed = _parse_fields(raw_text, document.doc_type, confidence)
+        parsed = _parse_fields(raw_text, document.doc_type)
 
         document.ocr_result = {
             "raw_text": raw_text,

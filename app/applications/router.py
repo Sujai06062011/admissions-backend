@@ -19,6 +19,7 @@ from app.models.stage1 import Applicant, Application, ProfileData, UploadedDocum
 from app.preferences.matching import compute_preference_match
 from app.schemas.stage1 import (
     ApplicantResponse,
+    ApplicantUpdate,
     ApplicationResponse,
     ApplicationSubmissionRequest,
     ApplicationSubmissionResponse,
@@ -31,6 +32,12 @@ from app.test_engine.router import _is_expired, _total_duration_minutes
 from workers.ocr_jobs import enqueue_ocr_job
 
 router = APIRouter(prefix="/applications", tags=["applications"])
+
+# Every other doc_type is a single fixed slot in the candidate form (one
+# address proof, one 10th marksheet, etc.) — uploading again should replace
+# it, not accumulate a second row that then shows up as a duplicate section
+# on the review/confirm screens.
+_REPEATABLE_DOC_TYPES = {"certifications", "experience_certificate"}
 
 
 @router.post("", response_model=ApplicationSubmissionResponse, status_code=201)
@@ -111,6 +118,12 @@ def upload_document(
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    if doc_type not in _REPEATABLE_DOC_TYPES:
+        db.query(UploadedDocument).filter(
+            UploadedDocument.application_id == application_id,
+            UploadedDocument.doc_type == doc_type,
+        ).delete()
+
     file_url = save_upload(application_id, file)
 
     document = UploadedDocument(
@@ -151,6 +164,33 @@ def update_application_profile(
     db.refresh(profile_data)
 
     return ProfileDataResponse.model_validate(profile_data)
+
+
+@router.patch("/{application_id}/applicant", response_model=ApplicantResponse)
+def update_applicant(
+    application_id: uuid.UUID, payload: ApplicantUpdate, db: Session = Depends(get_db)
+) -> ApplicantResponse:
+    """Lets the candidate app fix a typo'd name/phone/email from the Confirm &
+    Submit screen — full_name/phone/email live on Applicant, not the
+    profile_data JSON blob that /profile above patches, so this needed its
+    own endpoint. Only fields actually present in the request body are
+    changed (exclude_unset), so this can be called with just one field.
+    """
+    application = db.get(Application, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    applicant = db.get(Applicant, application.applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(applicant, field, value)
+
+    db.commit()
+    db.refresh(applicant)
+
+    return ApplicantResponse.model_validate(applicant)
 
 
 @router.get("/{application_id}", response_model=ApplicationProfileResponse)

@@ -36,6 +36,12 @@ class ApplicantCreate(BaseModel):
     phone: str | None = None
 
 
+class ApplicantUpdate(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
 class ApplicantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
