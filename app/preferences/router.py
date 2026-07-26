@@ -219,12 +219,30 @@ def create_admin_decision(
 def _apply_status_transition(application: Application, stage: str, decision: str) -> None:
     """Advances application.status to match an admin decision.
 
-    'approved' and 'manual_override' both push the application forward for its
-    stage; 'rejected' ends the pipeline regardless of stage. Adjust here if the
-    intended state machine differs.
+    'approved' always pushes the application forward for its stage;
+    'rejected' ends the pipeline regardless of stage.
+
+    'manual_override' at stage2_move_to_campus is deliberately NOT the same
+    as 'approved' here: it only clears the hard-cutoff rejection so the
+    candidate reappears in the normal Passed Screening pool — this leaves
+    application.status untouched. The frontend (see the isOverridden
+    parameter threaded through deriveStage/attachMatchResults in
+    lib/adminPipeline.ts) is what actually reclassifies the candidate into
+    the passed-screening bucket for display, since match_result.hard_pass
+    alone would otherwise keep showing them as rejected forever — hard_pass
+    is an objective computed fact this override doesn't change. Actually
+    moving them to campus (session assignment, credentials, invite email)
+    then requires a separate, deliberate "Move to Campus Test" click — the
+    exact same action and code path every other passed candidate goes
+    through — rather than firing automatically as a side effect of the
+    override itself. A manual_override at any other stage (not currently
+    reachable from the admin UI) still pushes forward immediately, same as
+    'approved', since there's no equivalent holding pool built for it yet.
     """
     if decision == "rejected":
         application.status = "rejected"
+    elif decision == "manual_override" and stage == "stage2_move_to_campus":
+        return
     elif decision in ("approved", "manual_override"):
         if stage == "stage2_move_to_campus":
             application.status = "moved_to_campus"
