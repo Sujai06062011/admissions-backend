@@ -4,7 +4,7 @@ from app.models.final import Notification
 from app.models.scheduling import CampusSession
 from app.models.stage1 import Application
 from app.models.stage3_test_a import Credential
-from app.notifications.resend_email import send_invite_email
+from app.notifications.email_dispatch import send_invite_email
 from app.notifications.whatsapp_stub import send_invite_whatsapp
 
 

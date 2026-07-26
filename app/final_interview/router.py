@@ -16,7 +16,7 @@ from app.final_interview.schemas import (
 from app.models.core import AdminUser
 from app.models.final import FinalDecision, Interview, Notification
 from app.models.stage1 import Application
-from app.notifications.resend_email import send_interview_invite_email
+from app.notifications.email_dispatch import send_interview_invite_email
 
 router = APIRouter(tags=["final_interview"])
 
