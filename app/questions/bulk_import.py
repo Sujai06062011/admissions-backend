@@ -6,7 +6,11 @@ from typing import get_args
 import openpyxl
 
 from app.questions.schemas import QuestionCategory
-from app.questions.validation import InvalidCorrectAnswer, resolve_correct_answer_text
+from app.questions.validation import (
+    InvalidCorrectAnswer,
+    resolve_correct_answer_text,
+    resolve_correct_answers_text,
+)
 
 VALID_CATEGORIES = set(get_args(QuestionCategory))
 
@@ -24,7 +28,9 @@ class ParsedQuestion:
     category: str
     question_text: str
     options: list[str] | None
+    answer_type: str
     correct_answer: str | None
+    correct_answers: list[str] | None
     difficulty: str
 
 
@@ -83,28 +89,55 @@ def _parse_row(
         return RowError(row=row_number, reason="missing question text")
 
     options = [values[col].strip() for col in option_columns if (values.get(col) or "").strip()]
-    correct_answer = (values.get("correct_answer") or "").strip() or None
     difficulty = (values.get("difficulty") or "").strip() or "medium"
 
-    if correct_answer is not None:
-        # Test A's grading engine only supports a single correct option per
-        # question (app/test_engine/grading.py compares one submitted index
-        # against one correct_index) — a row whose correct_answer doesn't
-        # resolve to exactly one option (e.g. a "Multiple Correct Answers"
-        # row with "A, C") would otherwise sit in the bank until it's
-        # randomly selected for a live test session and blows up test-start
-        # for every candidate in that category. Reject it here instead,
-        # at import time, where it's just a skipped row with a clear reason.
+    # A "Multiple Correct Answers" row (e.g. a "Select all that apply"
+    # question) writes its correct_answer cell as several comma-separated
+    # letters — "A, C" — rather than one. That comma is the only signal in
+    # this file format distinguishing it from a single-answer row; the
+    # "Question Type" column some spreadsheets include (Sequencing, Fill in
+    # the Blank, ...) is purely descriptive and isn't otherwise used here,
+    # since those still resolve to one letter same as a plain MCQ.
+    raw_correct = (values.get("correct_answer") or "").strip()
+    tokens = [t.strip() for t in raw_correct.split(",") if t.strip()]
+
+    if not tokens:
+        return ParsedQuestion(
+            category=category,
+            question_text=question_text,
+            options=options or None,
+            answer_type="single",
+            correct_answer=None,
+            correct_answers=None,
+            difficulty=difficulty,
+        )
+
+    if len(tokens) > 1:
         try:
-            resolve_correct_answer_text(options, correct_answer)
+            resolve_correct_answers_text(options, tokens)
         except InvalidCorrectAnswer as exc:
             return RowError(row=row_number, reason=f"correct_answer problem: {exc}")
+        return ParsedQuestion(
+            category=category,
+            question_text=question_text,
+            options=options or None,
+            answer_type="multi",
+            correct_answer=None,
+            correct_answers=tokens,
+            difficulty=difficulty,
+        )
 
+    try:
+        resolve_correct_answer_text(options, tokens[0])
+    except InvalidCorrectAnswer as exc:
+        return RowError(row=row_number, reason=f"correct_answer problem: {exc}")
     return ParsedQuestion(
         category=category,
         question_text=question_text,
         options=options or None,
-        correct_answer=correct_answer,
+        answer_type="single",
+        correct_answer=tokens[0],
+        correct_answers=None,
         difficulty=difficulty,
     )
 
@@ -122,12 +155,18 @@ def parse_questions_csv(
     the number of options per question is not fixed. Unrecognized columns
     (e.g. a "Question No" or "Question Type" index column) are ignored.
 
+    correct_answer holding a single letter/text ("C") imports as a
+    single-answer question; holding several comma-separated ("A, C")
+    imports as a multi-select ("select all that apply") question instead —
+    see the comment in _parse_row for why a comma is what distinguishes them.
+
     `category` may be omitted from the file entirely if `default_category`
     is supplied (used for every row that has no category cell of its own).
 
     Rows with a missing/blank category, question text, or a correct_answer
-    that can't be resolved to exactly one option, are skipped and reported
-    in the returned errors list rather than aborting the whole upload.
+    where any entry can't be resolved against that row's options, are
+    skipped and reported in the returned errors list rather than aborting
+    the whole upload.
     """
     reader = csv.DictReader(io.StringIO(content))
     headers = [_normalize_header(h) for h in (reader.fieldnames or []) if h]

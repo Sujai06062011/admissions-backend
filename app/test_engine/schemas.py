@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -14,11 +15,17 @@ from pydantic import BaseModel
 
 
 class TestAQuestionOut(BaseModel):
-    """Candidate-facing question shape. Never includes the correct answer."""
+    """Candidate-facing question shape. Never includes the correct answer(s).
+
+    answer_type tells the client whether to render this question as
+    single-select (radio buttons) or multi-select ("select all that
+    apply" — checkboxes).
+    """
 
     question_id: uuid.UUID
     question_text: str
     options: list[str]
+    answer_type: Literal["single", "multi"]
 
 
 class TestASessionStartResponse(BaseModel):
@@ -30,7 +37,10 @@ class TestASessionStartResponse(BaseModel):
 
 
 class TestASessionSubmitRequest(BaseModel):
-    answers: dict[str, int]  # question_id (str) -> selected option index
+    # question_id (str) -> selected option index(es). Always a list, even
+    # for a single-select question (one-element list) — a uniform shape
+    # means grading never needs to special-case answer_type.
+    answers: dict[str, list[int]]
 
 
 class TestASessionSubmitResponse(BaseModel):

@@ -56,6 +56,11 @@ class Question(Base):
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     options: Mapped[Any | None] = mapped_column(JSONB)
     correct_answer: Mapped[str | None] = mapped_column(Text)
+    # 'single' (correct_answer holds one option) or 'multi' (correct_answers
+    # holds the full list — see app/questions/validation.py for how each is
+    # resolved against `options`).
+    answer_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'single'"))
+    correct_answers: Mapped[Any | None] = mapped_column(JSONB)
     difficulty: Mapped[str | None] = mapped_column(Text, server_default=text("'medium'"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
 

@@ -108,6 +108,7 @@ def start_test_a_session(
                 question_id=uuid.UUID(q["question_id"]),
                 question_text=q["question_text"],
                 options=q["options"],
+                answer_type=q.get("answer_type", "single"),
             )
             for q in session.generated_questions
         ],

@@ -27,3 +27,25 @@ def resolve_correct_answer_text(options: list[str], correct_answer: str | None) 
         f"correct_answer {text!r} does not match any option in {options!r} "
         "and is not a valid letter label"
     )
+
+
+def resolve_correct_answers_text(
+    options: list[str], correct_answers: list[str] | None
+) -> list[str]:
+    """Multi-select counterpart to resolve_correct_answer_text: resolves each
+    entry in `correct_answers` independently (same exact-text-or-letter-label
+    rule as above), de-duplicating while preserving order.
+
+    Raises InvalidCorrectAnswer if the list is empty/missing, or if any
+    single entry doesn't resolve — same "reject the whole question rather
+    than silently drop one option" philosophy as the single-answer path.
+    """
+    if not correct_answers:
+        raise InvalidCorrectAnswer("correct_answers is empty")
+
+    resolved: list[str] = []
+    for raw in correct_answers:
+        text = resolve_correct_answer_text(options, raw)
+        if text not in resolved:
+            resolved.append(text)
+    return resolved

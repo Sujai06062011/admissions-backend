@@ -1,10 +1,15 @@
 import random
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.models.stage3_test_a import Question, QuestionBank, TestBlueprint
-from app.questions.validation import InvalidCorrectAnswer, resolve_correct_answer_text
+from app.questions.validation import (
+    InvalidCorrectAnswer,
+    resolve_correct_answer_text,
+    resolve_correct_answers_text,
+)
 
 
 class NoTestBlueprintConfigured(Exception):
@@ -16,27 +21,34 @@ class InsufficientQuestions(Exception):
 
 
 class MalformedQuestion(Exception):
-    """A question's correct_answer doesn't resolve against its options."""
+    """A question's correct_answer(s) don't resolve against its options."""
+
+
+@dataclass
+class _ResolvedQuestion:
+    question: Question
+    answer_type: str
+    correct_texts: list[str]
 
 
 def _resolved_category_pool(
     db: Session, program_id: uuid.UUID, category: str
-) -> list[tuple[Question, str]]:
-    """Every question in a category that has a correct_answer set, each
-    paired with its resolved correct answer text.
+) -> list[_ResolvedQuestion]:
+    """Every question in a category that has a correct answer set, each
+    paired with its resolved correct option text(s).
 
-    A question with no correct_answer at all (still a valid, optional state —
-    e.g. a draft not yet finished) is silently excluded here, same as before:
-    it's just not eligible for selection, not an error. A question WITH a
-    correct_answer that doesn't actually resolve against its options is a
-    different case — that's malformed data, not an intentional gap, so it's
-    validated up front across the WHOLE pool rather than only the questions
-    that happen to get randomly selected (checking only sampled questions
-    would make test-start success depend on random luck, which is a
-    confusing thing for an admin to debug — "it worked yesterday").  Raises
-    MalformedQuestion identifying the exact question (id + bank) on the
-    first one that doesn't resolve, so it gets fixed instead of quietly
-    shrinking the pool.
+    A question with no correct_answer/correct_answers at all (still a valid,
+    optional state — e.g. a draft not yet finished) is silently excluded
+    here, same as before: it's just not eligible for selection, not an
+    error. A question WITH an answer that doesn't actually resolve against
+    its options is a different case — that's malformed data, not an
+    intentional gap, so it's validated up front across the WHOLE pool
+    rather than only the questions that happen to get randomly selected
+    (checking only sampled questions would make test-start success depend
+    on random luck, which is a confusing thing for an admin to debug — "it
+    worked yesterday"). Raises MalformedQuestion identifying the exact
+    question (id + bank) on the first one that doesn't resolve, so it gets
+    fixed instead of quietly shrinking the pool.
     """
     pool = (
         db.query(Question)
@@ -47,19 +59,37 @@ def _resolved_category_pool(
 
     resolved = []
     for question in pool:
-        if not (question.correct_answer or "").strip():
-            continue
+        answer_type = question.answer_type or "single"
 
-        try:
-            correct_text = resolve_correct_answer_text(
-                question.options or [], question.correct_answer
-            )
-        except InvalidCorrectAnswer as exc:
-            raise MalformedQuestion(
-                f"Question {question.id} in bank {question.bank_id} has an "
-                f"invalid correct_answer: {exc}"
-            ) from exc
-        resolved.append((question, correct_text))
+        if answer_type == "multi":
+            if not question.correct_answers:
+                continue
+            try:
+                correct_texts = resolve_correct_answers_text(
+                    question.options or [], question.correct_answers
+                )
+            except InvalidCorrectAnswer as exc:
+                raise MalformedQuestion(
+                    f"Question {question.id} in bank {question.bank_id} has an "
+                    f"invalid correct_answers: {exc}"
+                ) from exc
+        else:
+            if not (question.correct_answer or "").strip():
+                continue
+            try:
+                correct_text = resolve_correct_answer_text(
+                    question.options or [], question.correct_answer
+                )
+            except InvalidCorrectAnswer as exc:
+                raise MalformedQuestion(
+                    f"Question {question.id} in bank {question.bank_id} has an "
+                    f"invalid correct_answer: {exc}"
+                ) from exc
+            correct_texts = [correct_text]
+
+        resolved.append(
+            _ResolvedQuestion(question=question, answer_type=answer_type, correct_texts=correct_texts)
+        )
 
     return resolved
 
@@ -77,12 +107,13 @@ def build_generated_questions(
     the overall question order across categories.
 
     Returns (generated_questions, total_duration_minutes). Each entry in
-    generated_questions is {question_id, question_text, options,
-    correct_index} — options are shuffled per-question, and correct_index is
-    computed fresh AFTER that shuffle (never reused from the question's
+    generated_questions is {question_id, question_text, options, answer_type,
+    correct_indices} — options are shuffled per-question, and correct_indices
+    is computed fresh AFTER that shuffle (never reused from the question's
     original stored order/label), since the whole point of the snapshot is
     that grading later never has to trust anything that could have changed
-    since generation.
+    since generation. correct_indices always holds every correct option's
+    index — length 1 for a single-answer question, 2+ for multi-select.
 
     Raises NoTestBlueprintConfigured / InsufficientQuestions / MalformedQuestion;
     callers turn these into HTTP errors.
@@ -105,17 +136,18 @@ def build_generated_questions(
             )
         selected = random.sample(resolved_pool, blueprint.question_count)
 
-        for question, correct_text in selected:
-            shuffled_options = list(question.options or [])
+        for item in selected:
+            shuffled_options = list(item.question.options or [])
             random.shuffle(shuffled_options)
-            correct_index = shuffled_options.index(correct_text)
+            correct_indices = sorted(shuffled_options.index(t) for t in item.correct_texts)
 
             generated_questions.append(
                 {
-                    "question_id": str(question.id),
-                    "question_text": question.question_text,
+                    "question_id": str(item.question.id),
+                    "question_text": item.question.question_text,
                     "options": shuffled_options,
-                    "correct_index": correct_index,
+                    "answer_type": item.answer_type,
+                    "correct_indices": correct_indices,
                 }
             )
 

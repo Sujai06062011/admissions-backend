@@ -136,7 +136,9 @@ create table questions (
   category text not null,                  -- quant, verbal, logical_reasoning, english_grammar, reading_comp
   question_text text not null,
   options jsonb,                           -- ["A", "B", "C", "D"]
-  correct_answer text,
+  correct_answer text,                     -- single-select: exact option text, or a letter label (A, B, ...)
+  answer_type text not null default 'single', -- 'single' or 'multi'
+  correct_answers jsonb,                   -- multi-select: ["A", "C"] — same letter/text convention as correct_answer, one per correct option
   difficulty text default 'medium',
   created_at timestamptz default now()
 );

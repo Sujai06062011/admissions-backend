@@ -21,7 +21,11 @@ from app.questions.schemas import (
     TestBlueprintResponse,
     TestBlueprintUpdate,
 )
-from app.questions.validation import InvalidCorrectAnswer, resolve_correct_answer_text
+from app.questions.validation import (
+    InvalidCorrectAnswer,
+    resolve_correct_answer_text,
+    resolve_correct_answers_text,
+)
 
 router = APIRouter(tags=["questions"])
 
@@ -101,10 +105,18 @@ def create_question(
     if db.get(QuestionBank, bank_id) is None:
         raise HTTPException(status_code=404, detail="Question bank not found")
 
-    # correct_answer is optional (a question can be created without one), but
-    # if it's given, it must actually resolve — reject here rather than let a
-    # bad value silently shrink Test A's selection pool later.
-    if payload.correct_answer is not None:
+    # correct_answer(s) are optional (a question can be created without one),
+    # but if given, must actually resolve against options — reject here
+    # rather than let a bad value silently shrink Test A's selection pool,
+    # or worse, blow up test-start for every candidate in that category once
+    # this question happens to get randomly selected.
+    if payload.answer_type == "multi":
+        if payload.correct_answers is not None:
+            try:
+                resolve_correct_answers_text(payload.options or [], payload.correct_answers)
+            except InvalidCorrectAnswer as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+    elif payload.correct_answer is not None:
         try:
             resolve_correct_answer_text(payload.options or [], payload.correct_answer)
         except InvalidCorrectAnswer as exc:
@@ -201,7 +213,9 @@ def bulk_upload_questions(
             category=p.category,
             question_text=p.question_text,
             options=p.options,
+            answer_type=p.answer_type,
             correct_answer=p.correct_answer,
+            correct_answers=p.correct_answers,
             difficulty=p.difficulty,
         )
         for p in parsed
