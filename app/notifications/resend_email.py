@@ -13,6 +13,16 @@ def _format_ist(dt: datetime) -> str:
     return dt.astimezone(IST).strftime("%d %b %Y %I:%M%p IST")
 
 
+def _from_header() -> str:
+    """Builds the "From" header as "Display Name <address>" so inboxes show a
+    friendly sender name instead of the raw mailbox address. Override the name
+    via RESEND_FROM_NAME if needed; defaults to "Admissions Department".
+    """
+    from_email = os.environ["RESEND_FROM_EMAIL"]
+    from_name = os.environ.get("RESEND_FROM_NAME", "Admissions Department")
+    return f"{from_name} <{from_email}>"
+
+
 def send_invite_email(
     to_email: str | None,
     applicant_name: str | None,
@@ -41,7 +51,7 @@ def send_invite_email(
         return False, "applicant has no email address on file"
 
     resend.api_key = os.environ["RESEND_API_KEY"]
-    from_email = os.environ["RESEND_FROM_EMAIL"]
+    from_email = _from_header()
 
     greeting_name = applicant_name or "Applicant"
     subject = "Your Application Has Moved to the Next Stage"
@@ -85,7 +95,7 @@ def send_interview_invite_email(
         return False, "applicant has no email address on file"
 
     resend.api_key = os.environ["RESEND_API_KEY"]
-    from_email = os.environ["RESEND_FROM_EMAIL"]
+    from_email = _from_header()
 
     greeting_name = applicant_name or "Applicant"
     subject = "Your Interview Has Been Scheduled"
