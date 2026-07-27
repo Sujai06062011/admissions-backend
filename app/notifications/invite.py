@@ -34,6 +34,7 @@ def send_campus_invite(
         temp_username=credential.temp_username,
         temp_password=temp_password,
         expires_at=credential.expires_at,
+        application_number=application.application_number,
     )
     notifications.append(
         Notification(

@@ -8,6 +8,11 @@ logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Hardcoded for the demo — there's only one deployed candidate portal right
+# now. Move to an env var once there's a real need to point at more than one
+# frontend deployment (e.g. staging vs prod).
+CAMPUS_LOGIN_URL = "https://admissions-frontend-phi.vercel.app/campus"
+
 
 def _format_ist(dt: datetime) -> str:
     return dt.astimezone(IST).strftime("%d %b %Y %I:%M%p IST")
@@ -32,6 +37,7 @@ def send_invite_email(
     temp_username: str,
     temp_password: str,
     expires_at: datetime,
+    application_number: str,
 ) -> tuple[bool, str]:
     """Sends the campus-invite email through Resend.
 
@@ -57,7 +63,8 @@ def send_invite_email(
     subject = "Your Application Has Moved to the Next Stage"
     html = (
         f"<p>Dear {greeting_name},</p>"
-        f"<p><b>Program Applied For:</b> {program_name}<br>"
+        f"<p><b>Application No:</b> {application_number}<br>"
+        f"<b>Program Applied For:</b> {program_name}<br>"
         f"<b>Applied On:</b> {_format_ist(applied_at)}<br>"
         f"<b>Current Status:</b> Your application has moved to the next stage.<br>"
         f"<b>Campus Test Date:</b> {campus_date.strftime('%d %b %Y')}</p>"
@@ -65,6 +72,7 @@ def send_invite_email(
         f"<p><b>Username:</b> {temp_username}<br>"
         f"<b>Password:</b> {temp_password}</p>"
         f"<p>These credentials expire at {_format_ist(expires_at)}.</p>"
+        f'<p><a href="{CAMPUS_LOGIN_URL}">{CAMPUS_LOGIN_URL}</a></p>'
         "<p>Regards,<br>Admin Team</p>"
         '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
     )
