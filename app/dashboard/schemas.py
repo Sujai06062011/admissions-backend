@@ -28,6 +28,11 @@ class CandidateListItem(BaseModel):
     preference_match_score: float | None
     test_a_score: float | None
     test_b_score: float | None
+    # None = no proctoring review yet (no Test B recording, or snapshots not
+    # reviewed yet); the main applications table only needs to know "flag it
+    # or don't" without loading the full review notes/snapshots, which the
+    # candidate drawer fetches separately in more detail.
+    proctoring_flagged: bool | None = None
 
 
 class CandidateProfileResponse(BaseModel):

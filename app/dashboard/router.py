@@ -14,7 +14,7 @@ from app.dashboard.schemas import (
     SignedUrlResponse,
 )
 from app.db.session import get_db
-from app.interview_engine.storage import create_recording_signed_url
+from app.interview_engine.storage import create_recording_signed_url, create_snapshot_signed_url
 from app.models.core import Program
 from app.models.stage1 import Application, UploadedDocument
 from app.models.stage3_test_b import TestBSession
@@ -66,6 +66,7 @@ def list_candidates(
 
     items = []
     for app in query.all():
+        proctoring_review = app.test_b_session.proctoring_review if app.test_b_session else None
         items.append(
             CandidateListItem(
                 application_id=app.id,
@@ -80,6 +81,9 @@ def list_candidates(
                 test_a_score=app.test_a_session.score if app.test_a_session else None,
                 test_b_score=normalized_test_b_score(
                     app.test_b_session.rubric_score if app.test_b_session else None
+                ),
+                proctoring_flagged=(
+                    proctoring_review.get("flagged") if proctoring_review else None
                 ),
             )
         )
@@ -207,4 +211,27 @@ def get_recording_signed_url(
         raise HTTPException(status_code=404, detail="No recording found for this application")
 
     url = create_recording_signed_url(session.recording_url, expires_in)
+    return _signed_url_response(url, expires_in)
+
+
+@router.get(
+    "/applications/{application_id}/proctoring-snapshot-signed-url",
+    response_model=SignedUrlResponse,
+)
+def get_proctoring_snapshot_signed_url(
+    application_id: uuid.UUID,
+    path: str = Query(..., description="One of this session's snapshot_urls object paths"),
+    db: Session = Depends(get_db),
+    expires_in: int = Query(3600, ge=60, le=86400, description="Seconds until the URL expires"),
+) -> SignedUrlResponse:
+    # Requiring `path` to be one of this session's own snapshot_urls (rather
+    # than trusting any string) stops an admin session from being used to
+    # mint a signed URL for an arbitrary object elsewhere in the bucket.
+    session = db.get(TestBSession, application_id)
+    if session is None or not session.snapshot_urls or path not in session.snapshot_urls:
+        raise HTTPException(
+            status_code=404, detail="No such proctoring snapshot for this application"
+        )
+
+    url = create_snapshot_signed_url(path, expires_in)
     return _signed_url_response(url, expires_in)
