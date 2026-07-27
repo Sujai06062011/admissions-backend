@@ -61,5 +61,12 @@ class TestBSession(Base):
     rationale: Mapped[str | None] = mapped_column(Text)
     recorded_at: Mapped[datetime | None] = mapped_column()
 
+    # Video proctoring — populated at submit time (snapshot_urls,
+    # tab_switch_events) and by the async Claude vision review step
+    # (proctoring_review), same lifecycle as rubric_score/rationale above.
+    snapshot_urls: Mapped[Any | None] = mapped_column(JSONB)
+    tab_switch_events: Mapped[Any | None] = mapped_column(JSONB)
+    proctoring_review: Mapped[Any | None] = mapped_column(JSONB)
+
     application: Mapped["Application"] = relationship(back_populates="test_b_session")
     prompt: Mapped["Prompt | None"] = relationship(back_populates="test_b_sessions")

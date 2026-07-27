@@ -1,6 +1,8 @@
+import json
 import uuid
 from datetime import datetime, timezone
 
+import pydantic
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -13,12 +15,12 @@ from app.interview_engine.schemas import (
     PromptResponse,
     PromptUpdate,
 )
-from app.interview_engine.storage import save_recording
+from app.interview_engine.storage import save_recording, save_snapshot
 from app.models.core import Program
 from app.models.scheduling import CampusSession
 from app.models.stage1 import Application
 from app.models.stage3_test_b import Prompt, PromptBank, TestBSession
-from app.schemas.stage3 import PromptType, TestBSessionResponse
+from app.schemas.stage3 import PromptType, TabSwitchEvent, TestBSessionResponse
 from workers.interview_scoring import enqueue_interview_scoring
 
 router = APIRouter(tags=["interview_engine"])
@@ -167,6 +169,28 @@ def delete_prompt(prompt_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
 # --- Recording submission ---
 
 
+def _parse_tab_switch_events(raw: str) -> list[dict]:
+    """Parses+validates the JSON-encoded tab-switch event log the candidate
+    app bundles in on submit. Empty/absent input is valid (nothing switched
+    tabs) and returns []; anything malformed is a 400, not a silent drop —
+    proctoring data quietly disappearing would be worse than a loud failure
+    here since it's used for academic-integrity review.
+    """
+    if not raw or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"tab_switch_events is not valid JSON: {exc}"
+        ) from exc
+    try:
+        events = pydantic.TypeAdapter(list[TabSwitchEvent]).validate_python(parsed)
+    except pydantic.ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid tab_switch_events: {exc}") from exc
+    return [json.loads(event.model_dump_json()) for event in events]
+
+
 @router.post(
     "/applications/{application_id}/test-b-recording",
     response_model=TestBSessionResponse,
@@ -177,6 +201,8 @@ def submit_recording(
     background_tasks: BackgroundTasks,
     prompt_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
+    snapshots: list[UploadFile] = File(default=[]),
+    tab_switch_events: str = Form(default=""),
     db: Session = Depends(get_db),
 ) -> TestBSession:
     application = db.get(Application, application_id)
@@ -198,6 +224,11 @@ def submit_recording(
         )
 
     recording_url = save_recording(application_id, file)
+    tab_events = _parse_tab_switch_events(tab_switch_events)
+    snapshot_urls = [
+        save_snapshot(application_id, snapshot.file.read(), index)
+        for index, snapshot in enumerate(snapshots)
+    ]
 
     session = db.get(TestBSession, application_id)
     if session is None:
@@ -207,12 +238,15 @@ def submit_recording(
     session.prompt = prompt
     session.recording_url = recording_url
     session.recorded_at = datetime.now(timezone.utc)
-    # Clear any prior scoring immediately on re-submission so a stale
-    # transcript/score from a previous recording is never visible against
-    # this new one while the background job is still running.
+    session.snapshot_urls = snapshot_urls or None
+    session.tab_switch_events = tab_events or None
+    # Clear any prior scoring/review immediately on re-submission so a stale
+    # transcript/score/flag from a previous recording is never visible
+    # against this new one while the background job is still running.
     session.transcript = None
     session.rubric_score = None
     session.rationale = None
+    session.proctoring_review = None
 
     db.commit()
     db.refresh(session)

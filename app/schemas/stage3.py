@@ -73,6 +73,26 @@ class TestBSessionCreate(BaseModel):
     recorded_at: datetime | None = None
 
 
+TabSwitchEventType = Literal["hidden", "visible", "blur", "focus"]
+
+
+class TabSwitchEvent(BaseModel):
+    type: TabSwitchEventType
+    at: datetime
+    # Only set on "visible"/"focus" events — how long the candidate was away
+    # since the matching "hidden"/"blur" event. None for "hidden"/"blur"
+    # itself, since the away-duration isn't known until they come back.
+    away_ms: int | None = None
+
+
+class ProctoringReview(BaseModel):
+    flagged: bool
+    # One entry per snapshot, same order as snapshot_urls.
+    faces_per_snapshot: list[int] = Field(default_factory=list)
+    notes: str | None = None
+    reviewed_at: datetime | None = None
+
+
 class TestBSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,3 +103,6 @@ class TestBSessionResponse(BaseModel):
     rubric_score: RubricScore | None
     rationale: str | None
     recorded_at: datetime | None
+    snapshot_urls: list[str] | None = None
+    tab_switch_events: list[TabSwitchEvent] | None = None
+    proctoring_review: ProctoringReview | None = None
