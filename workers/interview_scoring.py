@@ -1,11 +1,13 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks
 
 from app.db.session import SessionLocal
+from app.interview_engine.proctoring import review_snapshots
 from app.interview_engine.scoring import score_transcript
-from app.interview_engine.storage import download_recording
+from app.interview_engine.storage import download_recording, download_snapshot
 from app.interview_engine.transcription import transcribe_audio
 from app.models.stage3_test_b import TestBSession
 from app.preferences.matching import compute_preference_match
@@ -51,6 +53,43 @@ def process_interview_recording(application_id: str) -> None:
         logger.info("Interview scoring complete for application_id=%s", application_id)
     except Exception:
         logger.exception("Interview scoring failed for application_id=%s", application_id)
+    finally:
+        db.close()
+
+    _run_proctoring_review(application_id)
+
+
+def _run_proctoring_review(application_id: str) -> None:
+    """Runs the Claude vision proctoring review on any snapshots captured
+    during the interview.
+
+    Deliberately its own DB session and try/except, run after — not inside —
+    process_interview_recording's transcript/rubric-scoring block above: that
+    step may have already succeeded and committed by the time this runs, and
+    a proctoring failure (bad image, Claude API error) must never roll back
+    or block scoring that already completed. A missing/empty snapshot_urls
+    (e.g. an older recording submitted before this feature existed, or the
+    candidate's browser not supporting canvas capture) is a normal no-op,
+    not an error.
+    """
+    db = SessionLocal()
+    try:
+        session = db.get(TestBSession, uuid.UUID(application_id))
+        if session is None or not session.snapshot_urls:
+            return
+
+        snapshot_bytes = [download_snapshot(path) for path in session.snapshot_urls]
+        review, notes = review_snapshots(snapshot_bytes)
+
+        session.proctoring_review = {
+            **review,
+            "notes": notes,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        db.commit()
+        logger.info("Proctoring review complete for application_id=%s", application_id)
+    except Exception:
+        logger.exception("Proctoring review failed for application_id=%s", application_id)
     finally:
         db.close()
 
