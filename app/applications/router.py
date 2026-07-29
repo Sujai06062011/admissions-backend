@@ -1,5 +1,6 @@
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func
@@ -38,6 +39,10 @@ router = APIRouter(prefix="/applications", tags=["applications"])
 # it, not accumulate a second row that then shows up as a duplicate section
 # on the review/confirm screens.
 _REPEATABLE_DOC_TYPES = {"certifications", "experience_certificate"}
+
+# Keep aligned with DocumentUploadCard's ACCEPTED_TYPES on the frontend.
+# Vision OCR handles PDF via files:annotate and JPEG/PNG/WebP via images:annotate.
+_ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
 
 
 @router.post("", response_model=ApplicationSubmissionResponse, status_code=201)
@@ -117,6 +122,13 @@ def upload_document(
     application = db.get(Application, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type — please upload a PDF or image (JPG, PNG, or WebP)",
+        )
 
     if doc_type not in _REPEATABLE_DOC_TYPES:
         db.query(UploadedDocument).filter(

@@ -1,5 +1,6 @@
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import BackgroundTasks
 
@@ -23,6 +24,19 @@ _CLAUDE_EXTRACTED_DOC_TYPES = {
     "pg_marksheet",
 }
 
+# Extension → Vision content-type. Vision's images:annotate auto-detects the
+# actual codec from the bytes, so the value only needs to distinguish PDF
+# (files:annotate) from "any image" — but mapping the common image extensions
+# explicitly keeps logs/storage metadata accurate for JPEG/PNG/WebP uploads.
+_CONTENT_TYPE_BY_SUFFIX = {
+    ".pdf": PDF_CONTENT_TYPE,
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
 
 def _parse_fields(raw_text: str, doc_type: str) -> dict:
     """Routes to the right field extractor for a document's doc_type.
@@ -43,12 +57,30 @@ def _parse_fields(raw_text: str, doc_type: str) -> dict:
 
 
 def _guess_content_type(file_url: str) -> str:
-    """Vision's images:annotate endpoint auto-detects the actual image codec
-    from the bytes regardless of what's passed here — the only thing that
-    actually matters is routing PDFs to the separate files:annotate endpoint,
-    so this only needs to distinguish "PDF" from "everything else."
+    """Picks the Vision content-type from the stored object path's suffix.
+
+    PDFs must go to files:annotate; every other known image type goes to
+    images:annotate. Unknown suffixes default to image/jpeg so a photo
+    upload without a recognized extension still gets OCR'd rather than
+    rejected — Vision auto-detects the codec from the bytes either way.
     """
-    return PDF_CONTENT_TYPE if file_url.lower().endswith(".pdf") else "image/jpeg"
+    suffix = Path(file_url).suffix.lower()
+    return _CONTENT_TYPE_BY_SUFFIX.get(suffix, "image/jpeg")
+
+
+def _mark_ocr_failed(document: UploadedDocument, reason: str) -> None:
+    """Writes an explicit failure marker so the candidate ProcessingStep
+    stops polling forever. A non-null ocr_result counts as "done" on the
+    frontend; empty parsed fields then surface as "Enter manually" on the
+    Review screen — better than an infinite spinner.
+    """
+    document.ocr_result = {
+        "raw_text": "",
+        "parsed": {},
+        "confidence": 0.0,
+        "error": reason,
+    }
+    document.ocr_confidence = 0.0
 
 
 def process_document_ocr(document_id: str) -> None:
@@ -59,8 +91,8 @@ def process_document_ocr(document_id: str) -> None:
     request that triggered it has already returned, so it can't reuse that
     request's session. Never raises: a failed OCR run has no one left to
     report to (the upload request already completed), so failures are logged
-    instead of propagated, and the row is simply left without ocr_result
-    rather than left in a partially-written state.
+    and recorded as an explicit ocr_result error marker rather than left
+    null forever (which used to hang the candidate ProcessingStep spinner).
     """
     db = SessionLocal()
     try:
@@ -73,8 +105,10 @@ def process_document_ocr(document_id: str) -> None:
             file_bytes = download_document(document.file_url)
             content_type = _guess_content_type(document.file_url)
             raw_text, confidence = extract_text(file_bytes, content_type)
-        except Exception:
+        except Exception as exc:
             logger.exception("OCR job failed for document %s", document_id)
+            _mark_ocr_failed(document, f"ocr_failed: {type(exc).__name__}")
+            db.commit()
             return
 
         parsed = _parse_fields(raw_text, document.doc_type)
