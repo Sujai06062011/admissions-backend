@@ -18,7 +18,7 @@ from app.interview_engine.storage import create_recording_signed_url, create_sna
 from app.models.core import Program
 from app.models.stage1 import Application, UploadedDocument
 from app.models.stage3_test_b import TestBSession
-from app.preferences.matching import normalized_test_b_score
+from app.preferences.matching import compute_preference_match, normalized_test_b_score
 from app.schemas.stage1 import ApplicantResponse, ApplicationResponse, ProfileDataResponse, UploadedDocumentResponse
 from app.schemas.stage2 import AdminDecisionResponse, PreferenceMatchResultResponse
 from app.schemas.stage3 import TestASessionResponse, TestBSessionResponse
@@ -147,6 +147,11 @@ def get_candidate_profile(
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    # Recompute so Preference Match reflects live Campus Test / Video Interview
+    # scores (heals older rows where Numeric Decimal scores were dropped).
+    preference_match = compute_preference_match(db, application)
+    db.commit()
+
     campus_session_response = None
     if application.campus_session is not None:
         cs = application.campus_session
@@ -170,11 +175,7 @@ def get_candidate_profile(
         documents=[
             UploadedDocumentResponse.model_validate(d) for d in application.uploaded_documents
         ],
-        preference_match=(
-            PreferenceMatchResultResponse.model_validate(application.preference_match_result)
-            if application.preference_match_result
-            else None
-        ),
+        preference_match=PreferenceMatchResultResponse.model_validate(preference_match),
         admin_decisions=[
             AdminDecisionResponse.model_validate(d) for d in application.admin_decisions
         ],

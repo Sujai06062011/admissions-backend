@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -13,10 +14,21 @@ SESSION_SOURCED_FIELDS = {"test_a_score", "test_b_score"}
 
 
 def _numeric(value: object) -> float | None:
+    """Coerce preference/session values to float.
+
+    Test A scores are stored as SQL Numeric and come back as Decimal — without
+    accepting Decimal here, Campus Test reasons permanently store actual=null
+    even when the session has a real score.
+    """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
     return None
 
 
