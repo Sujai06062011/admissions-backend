@@ -33,6 +33,10 @@ class CandidateListItem(BaseModel):
     # or don't" without loading the full review notes/snapshots, which the
     # candidate drawer fetches separately in more detail.
     proctoring_flagged: bool | None = None
+    # True when profile_data.data.data_mismatches was written at submit time
+    # (candidate consented after name / auto-fill edits). Admin Applications
+    # page routes these into Rejected Screening until manually overridden.
+    has_data_mismatch: bool = False
 
 
 class CandidateProfileResponse(BaseModel):
