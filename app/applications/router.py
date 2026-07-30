@@ -251,6 +251,7 @@ def get_candidate_status(
     application = (
         db.query(Application)
         .options(
+            selectinload(Application.applicant),
             selectinload(Application.test_a_session),
             selectinload(Application.test_b_session),
             selectinload(Application.campus_session),
@@ -277,6 +278,8 @@ def get_candidate_status(
         program_id=application.program_id,
         status=application.status,
         campus_session_assigned=application.campus_session is not None,
+        applicant_name=application.applicant.full_name if application.applicant else None,
+        application_number=application.application_number,
         test_a=CandidateTestAStatus(
             submitted=test_a_session is not None and test_a_session.submitted_at is not None,
             score=test_a_session.score if test_a_session else None,

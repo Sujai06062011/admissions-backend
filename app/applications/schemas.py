@@ -39,5 +39,7 @@ class CandidateStatusResponse(BaseModel):
     program_id: uuid.UUID
     status: ApplicationStatus
     campus_session_assigned: bool
+    applicant_name: str | None = None
+    application_number: str | None = None
     test_a: CandidateTestAStatus
     test_b: CandidateTestBStatus
