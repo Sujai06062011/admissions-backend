@@ -7,6 +7,17 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-5"
 
+# Soft cap so a hung Anthropic request can't pin an OCR background task
+# indefinitely — the outer OCR job also has a hard wall-clock timeout.
+_CLAUDE_TIMEOUT_SECONDS = 45.0
+
+
+def _claude_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        timeout=_CLAUDE_TIMEOUT_SECONDS,
+    )
+
 _ADDRESS_TOOL = {
     "name": "submit_address_fields",
     "description": "Submit extracted postal address fields from a scanned address proof document.",
@@ -248,7 +259,7 @@ def extract_structured_fields_via_claude(raw_text: str, doc_type: str) -> dict:
         return empty
 
     try:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client = _claude_client()
         message = client.messages.create(
             model=MODEL,
             max_tokens=512,
@@ -283,7 +294,7 @@ def extract_certifications_via_claude(raw_text: str) -> dict:
         return empty
 
     try:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client = _claude_client()
         message = client.messages.create(
             model=MODEL,
             max_tokens=1024,

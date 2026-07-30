@@ -1,5 +1,6 @@
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
 from fastapi import BackgroundTasks
@@ -36,6 +37,11 @@ _CONTENT_TYPE_BY_SUFFIX = {
     ".webp": "image/webp",
     ".gif": "image/gif",
 }
+
+# Hard wall-clock budget for one document's download + Vision + Claude path.
+# Without this, a hung Claude/Supabase call (or a killed-mid-job deploy) left
+# ocr_result null forever and the candidate ProcessingStep spun indefinitely.
+_OCR_JOB_TIMEOUT_SECONDS = 90
 
 
 def _parse_fields(raw_text: str, doc_type: str) -> dict:
@@ -83,16 +89,29 @@ def _mark_ocr_failed(document: UploadedDocument, reason: str) -> None:
     document.ocr_confidence = 0.0
 
 
+def _run_ocr_pipeline(file_url: str, doc_type: str) -> tuple[str, float, dict]:
+    """Download → Vision OCR → Claude field parse. Runs in a worker thread
+    so the caller can impose a hard timeout without leaving the DB session
+    stuck mid-request.
+    """
+    file_bytes = download_document(file_url)
+    content_type = _guess_content_type(file_url)
+    raw_text, confidence = extract_text(file_bytes, content_type)
+    parsed = _parse_fields(raw_text, doc_type)
+    return raw_text, confidence, parsed
+
+
 def process_document_ocr(document_id: str) -> None:
     """Runs real OCR (Google Cloud Vision) on an uploaded document and stores
     the raw extracted text plus parsed structured fields on the row.
 
     Opens its own DB session — this runs as a background task after the
     request that triggered it has already returned, so it can't reuse that
-    request's session. Never raises: a failed OCR run has no one left to
-    report to (the upload request already completed), so failures are logged
-    and recorded as an explicit ocr_result error marker rather than left
-    null forever (which used to hang the candidate ProcessingStep spinner).
+    request's session. Never raises: a failed or timed-out OCR run has no
+    one left to report to (the upload request already completed), so
+    failures are logged and recorded as an explicit ocr_result error marker
+    rather than left null forever (which used to hang the candidate
+    ProcessingStep spinner).
     """
     db = SessionLocal()
     try:
@@ -101,17 +120,30 @@ def process_document_ocr(document_id: str) -> None:
             logger.error("OCR job: document %s not found", document_id)
             return
 
+        # If a previous attempt already wrote a result (e.g. a redeploy
+        # re-queued work somehow), don't overwrite a successful extraction.
+        if document.ocr_result is not None:
+            logger.info("OCR job skipped for document %s — already has ocr_result", document_id)
+            return
+
         try:
-            file_bytes = download_document(document.file_url)
-            content_type = _guess_content_type(document.file_url)
-            raw_text, confidence = extract_text(file_bytes, content_type)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_run_ocr_pipeline, document.file_url, document.doc_type)
+                raw_text, confidence, parsed = future.result(timeout=_OCR_JOB_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            logger.error(
+                "OCR job timed out after %ss for document %s",
+                _OCR_JOB_TIMEOUT_SECONDS,
+                document_id,
+            )
+            _mark_ocr_failed(document, "ocr_timeout")
+            db.commit()
+            return
         except Exception as exc:
             logger.exception("OCR job failed for document %s", document_id)
             _mark_ocr_failed(document, f"ocr_failed: {type(exc).__name__}")
             db.commit()
             return
-
-        parsed = _parse_fields(raw_text, document.doc_type)
 
         document.ocr_result = {
             "raw_text": raw_text,
