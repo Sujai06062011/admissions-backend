@@ -4,7 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-DecisionStage = Literal["stage2_move_to_campus", "stage3_call_for_interview"]
+DecisionStage = Literal[
+    "stage2_move_to_campus",
+    "stage3_call_for_interview",
+    "stage4_offer",
+]
 DecisionOutcome = Literal["approved", "rejected", "manual_override"]
 
 

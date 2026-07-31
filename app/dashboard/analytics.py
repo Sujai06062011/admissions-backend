@@ -22,8 +22,10 @@ def compute_funnel(db: Session, program_id: uuid.UUID) -> dict[str, int]:
 
     - received: every application submitted for the program.
     - rejected_on_preference_match: PreferenceMatchResult.hard_pass is False
-      — specifically the Stage 2 automated cutoff rejection, not rejection at
-      any later stage.
+      and the candidate has NOT been cleared by a stage2 manual_override.
+      Override does not flip hard_pass (that stays an objective computed fact),
+      so without excluding overrides those candidates would keep counting as
+      auto-rejected even after an admin accepted them into the pipeline.
     - moved_to_campus: a CampusSession row exists — created exactly once,
       at the point an application is moved to campus, and never removed.
     - test_a_complete: TestASession.submitted_at is set — the candidate
@@ -47,11 +49,23 @@ def compute_funnel(db: Session, program_id: uuid.UUID) -> dict[str, int]:
 
     received = base.count()
 
-    rejected_on_preference_match = (
+    overridden_ids = {
+        row[0]
+        for row in db.query(AdminDecision.application_id)
+        .filter(
+            AdminDecision.stage == "stage2_move_to_campus",
+            AdminDecision.decision == "manual_override",
+        )
+        .all()
+    }
+
+    rejected_query = (
         base.join(PreferenceMatchResult, Application.id == PreferenceMatchResult.application_id)
         .filter(PreferenceMatchResult.hard_pass.is_(False))
-        .count()
     )
+    if overridden_ids:
+        rejected_query = rejected_query.filter(Application.id.notin_(overridden_ids))
+    rejected_on_preference_match = rejected_query.count()
 
     moved_to_campus = base.join(
         CampusSession, Application.id == CampusSession.application_id

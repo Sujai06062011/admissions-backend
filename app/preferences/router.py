@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +10,7 @@ from app.campus.assignment import CampusFullyBooked, NoCampusSchedulesConfigured
 from app.credentials.generation import generate_credentials
 from app.db.session import get_db
 from app.models.core import AdminUser, Program
+from app.models.final import FinalDecision
 from app.models.stage1 import Application
 from app.models.stage2 import AdminDecision, PreferenceConfig, PreferenceMatchResult
 from app.notifications.invite import send_campus_invite
@@ -211,6 +213,15 @@ def create_admin_decision(
         credential, plaintext_password = generate_credentials(db, application)
         send_campus_invite(db, application, credential, plaintext_password, campus_session)
 
+    if application.status == "offered":
+        final = db.get(FinalDecision, application.id)
+        if final is None:
+            final = FinalDecision(application_id=application.id)
+            db.add(final)
+        final.decision = "offered"
+        final.decided_by = admin.id
+        final.decided_at = datetime.now(timezone.utc)
+
     db.commit()
     db.refresh(decision)
     return decision
@@ -248,3 +259,5 @@ def _apply_status_transition(application: Application, stage: str, decision: str
             application.status = "moved_to_campus"
         elif stage == "stage3_call_for_interview":
             application.status = "called_for_interview"
+        elif stage == "stage4_offer":
+            application.status = "offered"

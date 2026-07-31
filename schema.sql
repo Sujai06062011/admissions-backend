@@ -103,7 +103,7 @@ create table preference_match_results (
 create table admin_decisions (
   id uuid primary key default uuid_generate_v4(),
   application_id uuid not null references applications(id) on delete cascade,
-  stage text not null,                     -- 'stage2_move_to_campus', 'stage3_call_for_interview'
+  stage text not null,                     -- 'stage2_move_to_campus', 'stage3_call_for_interview', 'stage4_offer'
   decision text not null,                  -- 'approved', 'rejected', 'manual_override'
   decided_by uuid references admin_users(id),
   decided_at timestamptz default now(),
