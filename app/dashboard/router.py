@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, selectinload
 
 from app.applications.storage import create_document_signed_url
-from app.dashboard.analytics import compute_funnel
+from app.dashboard.analytics import compute_funnel, has_data_mismatch
 from app.dashboard.schemas import (
     CandidateListItem,
     CandidateProfileResponse,
@@ -24,21 +24,6 @@ from app.schemas.stage2 import AdminDecisionResponse, PreferenceMatchResultRespo
 from app.schemas.stage3 import TestASessionResponse, TestBSessionResponse
 
 router = APIRouter(tags=["dashboard"])
-
-
-def _has_data_mismatch(profile_data) -> bool:
-    """True when the candidate submitted after acknowledging OCR/name
-    mismatches — profile_data.data["data_mismatches"] is written by the
-    Confirm & Submit consent screen. Missing/empty means a clean submit.
-    """
-    if profile_data is None or not isinstance(profile_data.data, dict):
-        return False
-    mismatches = profile_data.data.get("data_mismatches")
-    if not isinstance(mismatches, dict):
-        return False
-    names = mismatches.get("name_mismatches") or []
-    edits = mismatches.get("edited_fields") or []
-    return bool(names) or bool(edits)
 
 
 # --- Funnel analytics ---
@@ -101,7 +86,7 @@ def list_candidates(
                 proctoring_flagged=(
                     proctoring_review.get("flagged") if proctoring_review else None
                 ),
-                has_data_mismatch=_has_data_mismatch(app.profile_data),
+                has_data_mismatch=has_data_mismatch(app.profile_data),
             )
         )
 

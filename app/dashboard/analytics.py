@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.scheduling import CampusSession
 from app.models.stage1 import Application
@@ -8,24 +8,69 @@ from app.models.stage2 import AdminDecision, PreferenceMatchResult
 from app.models.stage3_test_a import TestASession
 from app.models.stage3_test_b import TestBSession
 
+# Statuses that mean the candidate has already left the screening hold pool —
+# same gate deriveStage uses before it can return screening_rejected.
+_ADVANCED_PAST_SCREENING = frozenset(
+    {"moved_to_campus", "testing_complete", "called_for_interview", "offered"}
+)
+
+
+def has_data_mismatch(profile_data) -> bool:
+    """True when the candidate submitted after acknowledging OCR/name
+    mismatches — profile_data.data["data_mismatches"] is written by the
+    Confirm & Submit consent screen. Missing/empty means a clean submit.
+    """
+    if profile_data is None or not isinstance(profile_data.data, dict):
+        return False
+    mismatches = profile_data.data.get("data_mismatches")
+    if not isinstance(mismatches, dict):
+        return False
+    names = mismatches.get("name_mismatches") or []
+    edits = mismatches.get("edited_fields") or []
+    return bool(names) or bool(edits)
+
+
+def _is_screening_rejected(
+    *,
+    status: str,
+    hard_pass: bool | None,
+    is_overridden: bool,
+    data_mismatch: bool,
+) -> bool:
+    """Mirrors frontend lib/adminPipeline.ts deriveStage → screening_rejected.
+
+    Once a candidate has advanced past screening (campus / interview / offer),
+    they are no longer counted as a screening reject — even if hard_pass is
+    still false from an earlier preference compute.
+    """
+    if status in _ADVANCED_PAST_SCREENING:
+        return False
+    if is_overridden:
+        return False
+    if data_mismatch:
+        return True
+    if hard_pass is False:
+        return True
+    return False
+
 
 def compute_funnel(db: Session, program_id: uuid.UUID) -> dict[str, int]:
     """Computes funnel stage counts for a program.
 
-    Each count is cumulative — "reached at least this stage" — not "currently
-    sitting in exactly this status". application.status is a single mutable
-    field that only reflects the application's latest stage, so an applicant
-    who was moved to campus and has since been called for interview would be
-    missed by a naive `status == 'moved_to_campus'` filter. Instead, each
-    stage (other than 'received' and 'offered') is counted from durable
+    Each later-stage count is cumulative — "reached at least this stage" — not
+    "currently sitting in exactly this status". application.status is a single
+    mutable field that only reflects the application's latest stage, so an
+    applicant who was moved to campus and has since been called for interview
+    would be missed by a naive `status == 'moved_to_campus'` filter. Instead,
+    each stage (other than 'received' and 'offered') is counted from durable
     evidence that the stage was actually reached:
 
     - received: every application submitted for the program.
-    - rejected_on_preference_match: PreferenceMatchResult.hard_pass is False
-      and the candidate has NOT been cleared by a stage2 manual_override.
-      Override does not flip hard_pass (that stays an objective computed fact),
-      so without excluding overrides those candidates would keep counting as
-      auto-rejected even after an admin accepted them into the pipeline.
+    - rejected_on_preference_match: candidates who would show as
+      "Rejected at Screening" in the Applications UI (hard_pass false and/or
+      data mismatch, not overridden, and not yet advanced past screening).
+      Kept under this field name for API compatibility; Overview uses
+      received - this count as Passed Screening so it matches Applications.
     - moved_to_campus: a CampusSession row exists — created exactly once,
       at the point an application is moved to campus, and never removed.
     - test_a_complete: TestASession.submitted_at is set — the candidate
@@ -39,15 +84,17 @@ def compute_funnel(db: Session, program_id: uuid.UUID) -> dict[str, int]:
       ('approved','manual_override') — counted from the decision event
       itself (deduplicated) rather than application.status, since status
       moves on to 'offered' afterward and would otherwise undercount.
-    - offered: application.status == 'offered'. This is the one stage still
-      read from application.status directly, because it's a terminal state
-      nothing moves past, and no other endpoint currently records an offer
-      anywhere else (FinalDecision exists as a model but nothing writes to
-      it yet).
+    - offered: application.status == 'offered'.
     """
     base = db.query(Application).filter(Application.program_id == program_id)
 
-    received = base.count()
+    applications = (
+        base.options(
+            selectinload(Application.preference_match_result),
+            selectinload(Application.profile_data),
+        ).all()
+    )
+    received = len(applications)
 
     overridden_ids = {
         row[0]
@@ -59,13 +106,18 @@ def compute_funnel(db: Session, program_id: uuid.UUID) -> dict[str, int]:
         .all()
     }
 
-    rejected_query = (
-        base.join(PreferenceMatchResult, Application.id == PreferenceMatchResult.application_id)
-        .filter(PreferenceMatchResult.hard_pass.is_(False))
-    )
-    if overridden_ids:
-        rejected_query = rejected_query.filter(Application.id.notin_(overridden_ids))
-    rejected_on_preference_match = rejected_query.count()
+    rejected_on_preference_match = 0
+    for app in applications:
+        hard_pass = (
+            app.preference_match_result.hard_pass if app.preference_match_result else None
+        )
+        if _is_screening_rejected(
+            status=app.status,
+            hard_pass=hard_pass,
+            is_overridden=app.id in overridden_ids,
+            data_mismatch=has_data_mismatch(app.profile_data),
+        ):
+            rejected_on_preference_match += 1
 
     moved_to_campus = base.join(
         CampusSession, Application.id == CampusSession.application_id
