@@ -140,11 +140,15 @@ def match_speaker_to_participant(
             score = 3.0 + len(speaker_tokens & name_tokens)
         else:
             overlap = speaker_tokens & name_tokens
+            # Prefix match for near-variants (sujaikumar ≈ sujaikuma)
+            for st in speaker_tokens:
+                for nt in name_tokens:
+                    if len(st) >= 5 and len(nt) >= 5 and (st.startswith(nt) or nt.startswith(st)):
+                        overlap = overlap | {st, nt}
             if not overlap:
                 continue
             score = len(overlap) / max(len(speaker_tokens | name_tokens), 1)
-            # Require at least one strong token match for fuzzy
-            if score < 0.4 and len(overlap) < 2:
+            if score < 0.35 and len(overlap) < 2:
                 continue
         if score > best_score:
             best_score = score
