@@ -25,6 +25,7 @@ from app.group_discussion.schemas import (
     SendInvitesResponse,
     SmokeCreateMeetingRequest,
     SmokeCreateMeetingResponse,
+    UploadTranscriptRequest,
 )
 from app.group_discussion.service import serialize_session
 from app.group_discussion.teams_graph import (
@@ -34,6 +35,7 @@ from app.group_discussion.teams_graph import (
     create_online_meeting,
     enable_meeting_recording,
     teams_graph_enabled,
+    vtt_to_plain_text,
 )
 from app.models.core import AdminUser, Program
 from app.models.final import Notification
@@ -422,6 +424,46 @@ def fetch_session_artifacts(
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=502, detail=f"Artifact ingest failed: {exc}") from exc
+
+    session = _session_query(db, session_id)
+    assert session is not None
+    return serialize_session(session)
+
+
+@router.post("/sessions/{session_id}/upload-transcript", response_model=GdSessionResponse)
+def upload_session_transcript(
+    session_id: uuid.UUID,
+    payload: UploadTranscriptRequest,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    """Store transcript text when Graph transcript API is still tenant-blocked.
+
+    Download VTT from Stream (Transcript → Download), or paste plain text.
+    Does not change Application.status.
+    """
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+
+    raw = payload.transcript.strip()
+    if payload.is_vtt or raw.lstrip().startswith("WEBVTT"):
+        session.transcript_vtt = raw
+        session.transcript_text = vtt_to_plain_text(raw) or raw
+    else:
+        session.transcript_text = raw
+        session.transcript_vtt = None
+
+    session.transcript_graph_id = None
+    session.artifacts_status = "ready"
+    # Keep prior recording error note only if video missing
+    if session.recording_storage_path:
+        session.artifacts_error = None
+    session.artifacts_fetched_at = datetime.now(timezone.utc)
+    if session.status in {"invited", "meeting_ready", "draft"}:
+        session.status = "completed"
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
 
     session = _session_query(db, session_id)
     assert session is not None

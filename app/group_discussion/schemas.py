@@ -89,3 +89,14 @@ class SendInvitesResponse(BaseModel):
     session_id: uuid.UUID
     status: str
     results: list[dict]
+
+
+class UploadTranscriptRequest(BaseModel):
+    """Manual transcript ingest when Graph transcript API is tenant-blocked.
+
+    Paste plain text, or WebVTT downloaded from Stream's Transcript → Download.
+    """
+
+    transcript: str = Field(min_length=1, max_length=500_000)
+    is_vtt: bool = False
+
