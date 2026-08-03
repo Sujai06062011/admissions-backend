@@ -42,7 +42,7 @@ from app.models.core import AdminUser, Program
 from app.models.final import Notification
 from app.models.group_discussion import GdParticipant, GdSession
 from app.models.stage1 import Application
-from app.notifications.email_dispatch import send_gd_invite_email
+from app.notifications.email_dispatch import send_gd_invite_email, send_gd_moderator_invite_email
 from app.preferences.matching import normalized_test_b_score
 
 router = APIRouter(prefix="/admin/group-discussion", tags=["group_discussion"])
@@ -550,6 +550,26 @@ def send_invites(
                 "email": applicant.email if applicant else None,
                 "success": email_ok,
                 "detail": detail,
+            }
+        )
+
+    if session.professor_email:
+        mod_ok, mod_detail = send_gd_moderator_invite_email(
+            to_email=session.professor_email,
+            moderator_name=None,
+            program_name=program_name,
+            session_label=session.label or "Group Discussion",
+            scheduled_at=session.scheduled_at,
+            duration_minutes=session.duration_minutes,
+            join_url=session.join_url,
+        )
+        results.append(
+            {
+                "application_id": None,
+                "email": session.professor_email,
+                "role": "moderator",
+                "success": mod_ok,
+                "detail": mod_detail,
             }
         )
 

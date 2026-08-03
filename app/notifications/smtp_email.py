@@ -160,3 +160,35 @@ def send_gd_invite_email(
         '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
     )
     return _send_smtp_email(to_email, subject, html)
+
+
+def send_gd_moderator_invite_email(
+    to_email: str | None,
+    moderator_name: str | None,
+    program_name: str,
+    session_label: str,
+    scheduled_at: datetime,
+    duration_minutes: int,
+    join_url: str,
+) -> tuple[bool, str]:
+    """Sends the GD Teams join link to the college moderator / professor."""
+    if not to_email:
+        return False, "moderator has no email address"
+
+    greeting_name = moderator_name or "Moderator"
+    subject = "Group Discussion — Moderator Join Link"
+    html = (
+        f"<p>Dear {greeting_name},</p>"
+        f"<p>You are listed as the moderator for this Group Discussion.</p>"
+        f"<p><b>Program:</b> {program_name}<br>"
+        f"<b>Group:</b> {session_label}<br>"
+        f"<b>Date &amp; Time:</b> {_format_ist(scheduled_at)}<br>"
+        f"<b>Duration:</b> {duration_minutes} minutes</p>"
+        "<p>Join as host / moderator using the Microsoft Teams link below "
+        "(prefer signing in with the Parroworks organizer account so you can admit lobby guests):</p>"
+        f'<p><a href="{join_url}">{join_url}</a></p>'
+        "<p>Please enable <b>Record</b> and <b>Transcribe</b> during the session.</p>"
+        "<p>Regards,<br>Admin Team</p>"
+        '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
+    )
+    return _send_smtp_email(to_email, subject, html)
