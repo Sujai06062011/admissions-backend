@@ -480,7 +480,8 @@ def score_session(
     """Claude GDPI scoring per participant from stored transcript.
 
     Dimensions (0-10): leadership, communication, teamwork, attitude, content,
-    grammar. overall_score is equal-weight blend scaled to 0-100.
+    grammar. overall_score is the equal-weight average on 0-10 (show as X/10
+    in UI). For composite later, use overall_score * 10 → 0-100.
     Speakers are matched to applicants by name; unmatched speakers are skipped.
     """
     session = _session_query(db, session_id)

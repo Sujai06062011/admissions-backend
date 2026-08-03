@@ -157,11 +157,14 @@ def match_speaker_to_participant(
 
 
 def compute_overall_score(dimension_scores: dict[str, float]) -> float:
-    """Weighted blend on 0-10 dims → 0-100 overall (same scale as campus tests)."""
+    """Equal-weight average of 0-10 dimensions → overall on 0-10 (for UI).
+
+    For composite preference weight later, scale with overall_score * 10 (→ 0-100).
+    """
     total = 0.0
     for dim, weight in OVERALL_WEIGHTS.items():
         total += float(dimension_scores.get(dim, 0.0)) * weight
-    return round(total * 10.0, 2)
+    return round(total, 2)
 
 
 def _build_prompt(
