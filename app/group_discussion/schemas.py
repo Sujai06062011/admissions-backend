@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 AssignmentStrategy = Literal["composite", "gender_mix", "random", "manual"]
+GdTrack = Literal["online", "manual"]
+JoinRole = Literal["candidate", "host"]
 
 
 class SmokeCreateMeetingRequest(BaseModel):
@@ -22,22 +24,45 @@ class SmokeCreateMeetingResponse(BaseModel):
     organizer_upn: str
 
 
+class SmokeAcsTokenResponse(BaseModel):
+    user_id: str
+    token: str
+    expires_on: datetime
+
+
 class CreateGdSessionRequest(BaseModel):
     program_id: uuid.UUID
     label: str | None = Field(default=None, max_length=120)
-    target_size: int = Field(default=5, ge=2, le=12)
+    target_size: int = Field(default=5, ge=5, le=7)
     scheduled_at: datetime | None = None
     duration_minutes: int = Field(default=60, ge=15, le=240)
     assignment_strategy: AssignmentStrategy = "composite"
     application_ids: list[uuid.UUID] | None = None
     professor_email: str | None = None
+    professor_name: str | None = Field(default=None, max_length=120)
+    topic: str | None = Field(default=None, max_length=500)
+    track: GdTrack = "online"
+    join_opens_minutes_before: int | None = Field(default=None, ge=0, le=120)
     auto_assign: bool = True
 
 
 class AssignGdSessionRequest(BaseModel):
     assignment_strategy: AssignmentStrategy | None = None
     application_ids: list[uuid.UUID] | None = None
-    target_size: int | None = Field(default=None, ge=2, le=12)
+    target_size: int | None = Field(default=None, ge=5, le=7)
+
+
+class UpdateGdSessionRequest(BaseModel):
+    """Configure moderator / topic / schedule before send or start."""
+
+    label: str | None = Field(default=None, max_length=120)
+    scheduled_at: datetime | None = None
+    duration_minutes: int | None = Field(default=None, ge=15, le=240)
+    professor_email: str | None = None
+    professor_name: str | None = Field(default=None, max_length=120)
+    topic: str | None = Field(default=None, max_length=500)
+    join_opens_minutes_before: int | None = Field(default=None, ge=0, le=120)
+    track: GdTrack | None = None
 
 
 class GdParticipantResponse(BaseModel):
@@ -68,9 +93,15 @@ class GdSessionResponse(BaseModel):
     duration_minutes: int
     assignment_strategy: str
     status: str
+    track: str = "online"
     teams_meeting_id: str | None
     join_url: str | None
+    topic: str | None = None
     professor_email: str | None
+    professor_name: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    join_opens_minutes_before: int | None = None
     recording_storage_path: str | None = None
     transcript_text: str | None = None
     artifacts_status: str | None = None
@@ -106,3 +137,44 @@ class UploadTranscriptRequest(BaseModel):
     transcript: str = Field(min_length=1, max_length=500_000)
     is_vtt: bool = False
 
+
+class AdminAcsJoinRequest(BaseModel):
+    """Mint ACS credentials for an existing GD session (admin / host testing)."""
+
+    role: JoinRole = "host"
+    display_name: str = Field(default="GD Host", max_length=80)
+    # Host/admin testing before the candidate join window opens.
+    bypass_join_window: bool = True
+
+
+class CandidateAcsJoinRequest(BaseModel):
+    application_id: uuid.UUID
+    display_name: str | None = Field(default=None, max_length=80)
+
+
+class AcsJoinResponse(BaseModel):
+    session_id: uuid.UUID
+    role: JoinRole
+    display_name: str
+    acs_user_id: str
+    acs_token: str
+    acs_token_expires_on: datetime
+    teams_meeting_id: str | None
+    # Returned for SDK join only — never put in candidate emails.
+    teams_join_url: str
+    status: str
+    scheduled_at: datetime | None
+    join_opens_at: datetime | None
+    started_at: datetime | None
+    ends_at: datetime | None = None
+    # Null until host Start (topic gating).
+    topic: str | None = None
+    duration_minutes: int
+
+
+class StartGdSessionResponse(BaseModel):
+    session_id: uuid.UUID
+    status: str
+    started_at: datetime
+    ends_at: datetime
+    topic: str | None

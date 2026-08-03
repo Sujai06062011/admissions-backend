@@ -11,3 +11,4 @@ groq
 anthropic
 httpx
 openpyxl
+azure-communication-identity

@@ -150,6 +150,16 @@ def _meeting_recording_settings() -> dict:
     }
 
 
+def _meeting_lobby_settings() -> dict:
+    """Allow ACS / anonymous guests to skip the Teams lobby when policy permits."""
+    return {
+        "lobbyBypassSettings": {
+            "scope": "everyone",
+            "isDialInBypassEnabled": True,
+        },
+    }
+
+
 def enable_meeting_recording(meeting_id: str, *, config: TeamsGraphConfig | None = None) -> dict:
     """PATCH an existing online meeting to auto-record + allow transcription."""
     _cfg, token, organizer_id = _auth_context(config)
@@ -158,8 +168,9 @@ def enable_meeting_recording(meeting_id: str, *, config: TeamsGraphConfig | None
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    patch_body = {**_meeting_recording_settings(), **_meeting_lobby_settings()}
     with httpx.Client(timeout=30.0) as client:
-        response = client.patch(url, headers=headers, json=_meeting_recording_settings())
+        response = client.patch(url, headers=headers, json=patch_body)
     if response.status_code >= 400:
         raise TeamsGraphApiError(response.status_code, response.text)
     return response.json() if response.content else {}
@@ -190,6 +201,7 @@ def create_online_meeting(
         "startDateTime": start_dt.isoformat().replace("+00:00", "Z"),
         "endDateTime": end_dt.isoformat().replace("+00:00", "Z"),
         **_meeting_recording_settings(),
+        **_meeting_lobby_settings(),
     }
     headers = {
         "Authorization": f"Bearer {token}",

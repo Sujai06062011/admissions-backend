@@ -135,10 +135,13 @@ def send_gd_invite_email(
     session_label: str,
     scheduled_at: datetime,
     duration_minutes: int,
-    join_url: str,
+    portal_url: str,
+    temp_username: str,
+    temp_password: str,
     application_number: str | None,
+    join_opens_minutes_before: int = 10,
 ) -> tuple[bool, str]:
-    """Sends a Group Discussion Teams invite. Same (success, detail) contract."""
+    """GD stage invite: campus portal + temp login. Never includes Teams URL or topic."""
     if not to_email:
         return False, "applicant has no email address on file"
 
@@ -146,16 +149,20 @@ def send_gd_invite_email(
     app_line = (
         f"<b>Application No:</b> {application_number}<br>" if application_number else ""
     )
-    subject = "Your Group Discussion Has Been Scheduled"
+    subject = "You've been selected for Group Discussion"
     html = (
         f"<p>Dear {greeting_name},</p>"
+        f"<p>You have been moved to the next stage: <b>Group Discussion</b>.</p>"
         f"<p>{app_line}"
         f"<b>Program:</b> {program_name}<br>"
         f"<b>Group:</b> {session_label}<br>"
         f"<b>Date &amp; Time:</b> {_format_ist(scheduled_at)}<br>"
         f"<b>Duration:</b> {duration_minutes} minutes</p>"
-        "<p>Please join the Microsoft Teams meeting using the link below:</p>"
-        f'<p><a href="{join_url}">{join_url}</a></p>'
+        f"<p>Sign in to the campus portal "
+        f"(Join opens {join_opens_minutes_before} minutes before the scheduled time):</p>"
+        f'<p><a href="{portal_url}">{portal_url}</a></p>'
+        f"<p><b>Username:</b> {temp_username}<br>"
+        f"<b>Password:</b> {temp_password}</p>"
         "<p>Regards,<br>Admin Team</p>"
         '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
     )

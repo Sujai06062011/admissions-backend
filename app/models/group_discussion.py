@@ -34,11 +34,20 @@ class GdSession(Base):
     assignment_strategy: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'manual'")
     )
-    # draft → meeting_ready → invited → completed → scored
+    # draft → meeting_ready → invited → live → completed → scored
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'draft'"))
+    # online | manual (in-person)
+    track: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'online'"))
     teams_meeting_id: Mapped[str | None] = mapped_column(Text)
     join_url: Mapped[str | None] = mapped_column(Text)
+    topic: Mapped[str | None] = mapped_column(Text)
     professor_email: Mapped[str | None] = mapped_column(Text)
+    professor_name: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column()
+    ended_at: Mapped[datetime | None] = mapped_column()
+    join_opens_minutes_before: Mapped[int | None] = mapped_column(
+        Integer, server_default=text("10")
+    )
     recording_storage_path: Mapped[str | None] = mapped_column(Text)
     recording_graph_id: Mapped[str | None] = mapped_column(Text)
     transcript_text: Mapped[str | None] = mapped_column(Text)

@@ -38,8 +38,8 @@ def pick_participants(
 ) -> list[Application]:
     if strategy not in STRATEGIES:
         raise ValueError(f"Unknown assignment_strategy: {strategy}")
-    if target_size < 2 or target_size > 12:
-        raise ValueError("target_size must be between 2 and 12")
+    if target_size < 5 or target_size > 7:
+        raise ValueError("target_size must be between 5 and 7")
 
     if strategy == "manual" or application_ids is not None:
         if not application_ids:

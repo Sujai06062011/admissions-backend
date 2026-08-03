@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ACS ↔ Teams join smoke</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; font-weight: 600; margin-top: 1rem; }
+      input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 0.35rem; }
+      textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
+      button { margin-top: 1rem; padding: 0.75rem; font-weight: 600; cursor: pointer; }
+      #log { white-space: pre-wrap; background: #f4f4f5; padding: 1rem; border-radius: 8px; font-size: 13px; }
+      #localVideo, #remoteVideos video { width: 240px; background: #111; margin: 0.5rem 0.5rem 0 0; }
+    </style>
+  </head>
+  <body>
+    <h1>ACS Teams join smoke</h1>
+    <p>
+      Paste values from
+      <code>POST /admin/group-discussion/sessions/&#123;id&#125;/acs-join</code>
+      then Join. Open the same Teams meeting as the Parroworks organizer in Teams if lobby still applies.
+    </p>
+
+    <label>Display name <input id="displayName" value="ACS Smoke" /></label>
+    <label>ACS token <textarea id="token" placeholder="eyJ..."></textarea></label>
+    <label>Teams join URL <textarea id="joinUrl" placeholder="https://teams.microsoft.com/l/meetup-join/..."></textarea></label>
+    <button id="joinBtn" type="button">Join meeting</button>
+    <button id="leaveBtn" type="button">Leave</button>
+
+    <h3>Local</h3>
+    <div id="localVideo"></div>
+    <h3>Remote</h3>
+    <div id="remoteVideos"></div>
+    <h3>Log</h3>
+    <div id="log"></div>
+
+    <script type="module">
+      import { CallClient, Features } from "https://esm.sh/@azure/communication-calling@1.35.1";
+      import { AzureCommunicationTokenCredential } from "https://esm.sh/@azure/communication-common@2.3.1";
+
+      const logEl = document.getElementById("log");
+      const log = (msg) => {
+        logEl.textContent += `${msg}\n`;
+      };
+
+      let call;
+      let callAgent;
+
+      document.getElementById("joinBtn").onclick = async () => {
+        const token = document.getElementById("token").value.trim();
+        const joinUrl = document.getElementById("joinUrl").value.trim();
+        const displayName = document.getElementById("displayName").value.trim() || "ACS Smoke";
+        if (!token || !joinUrl) {
+          alert("Token and join URL are required");
+          return;
+        }
+        try {
+          log("Creating call agent…");
+          const callClient = new CallClient();
+          const credential = new AzureCommunicationTokenCredential(token);
+          callAgent = await callClient.createCallAgent(credential, { displayName });
+          const deviceManager = await callClient.getDeviceManager();
+          await deviceManager.askDevicePermission({ audio: true, video: true });
+
+          log("Joining Teams meeting…");
+          call = callAgent.join({ meetingLink: joinUrl }, {
+            audioOptions: { muted: false },
+          });
+
+          call.on("stateChanged", () => log(`Call state: ${call.state}`));
+          call.on("remoteParticipantsUpdated", (e) => {
+            e.added.forEach((p) => log(`Remote joined: ${p.displayName || p.identifier?.communicationUserId || "?"}`));
+            e.removed.forEach((p) => log(`Remote left: ${p.displayName || "?"}`));
+          });
+
+          // Lobby feature (if present)
+          try {
+            const lobby = call.feature?.(Features.Lobby);
+            if (lobby) {
+              lobby.on("lobbyParticipantsUpdated", () => log("Lobby participants updated"));
+            }
+          } catch (_) {
+            /* older SDK */
+          }
+          log("Join requested. If stuck in Lobby, admit from Teams host.");
+        } catch (err) {
+          console.error(err);
+          log(`ERROR: ${err?.message || err}`);
+        }
+      };
+
+      document.getElementById("leaveBtn").onclick = async () => {
+        if (call) {
+          await call.hangUp();
+          log("Left call");
+        }
+      };
+    </script>
+  </body>
+</html>

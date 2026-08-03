@@ -9,6 +9,7 @@ from app.campus.router import router as campus_router
 from app.credentials.router import router as credentials_router
 from app.dashboard.router import router as dashboard_router
 from app.final_interview.router import router as final_interview_router
+from app.group_discussion.campus_router import router as campus_group_discussion_router
 from app.group_discussion.router import router as group_discussion_router
 from app.interview_engine.router import router as interview_engine_router
 from app.preferences.router import router as preferences_router
@@ -37,6 +38,8 @@ app.include_router(test_engine_router)
 app.include_router(final_interview_router)
 # GD / Teams Graph — additive only; gated by TEAMS_GRAPH_ENABLED (off by default).
 app.include_router(group_discussion_router)
+# Candidate ACS join — gated by ACS_ENABLED + join window.
+app.include_router(campus_group_discussion_router)
 
 
 @app.get("/health")

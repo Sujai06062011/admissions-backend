@@ -5,27 +5,45 @@ Additive only — does not change Application.status or existing pipeline endpoi
 
 from __future__ import annotations
 
+import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.dependencies import get_current_admin
+from app.credentials.generation import generate_credentials
 from app.db.session import get_db
+from app.group_discussion.acs import (
+    AcsConfigError,
+    acs_enabled,
+    issue_voip_join_token,
+)
 from app.group_discussion.artifacts import ingest_session_artifacts
 from app.group_discussion.assignment import pick_participants
 from app.group_discussion.eligibility import list_eligible_applications
+from app.group_discussion.join_window import (
+    default_join_opens_minutes,
+    join_opens_at,
+    join_window_open,
+    topic_visible,
+)
 from app.group_discussion.score_runner import score_session_participants
 from app.group_discussion.schemas import (
+    AcsJoinResponse,
+    AdminAcsJoinRequest,
     AssignGdSessionRequest,
     CreateGdSessionRequest,
     EligibleCandidateResponse,
     GdSessionResponse,
     SendInvitesResponse,
+    SmokeAcsTokenResponse,
     SmokeCreateMeetingRequest,
     SmokeCreateMeetingResponse,
+    StartGdSessionResponse,
+    UpdateGdSessionRequest,
     UploadTranscriptRequest,
 )
 from app.group_discussion.service import serialize_session
@@ -114,6 +132,29 @@ def smoke_create_meeting(
         start_date_time=meeting.start_date_time,
         end_date_time=meeting.end_date_time,
         organizer_upn=config.organizer_upn,
+    )
+
+
+@router.post("/smoke/acs-token", response_model=SmokeAcsTokenResponse)
+def smoke_acs_token(
+    _admin: AdminUser = Depends(get_current_admin),
+) -> SmokeAcsTokenResponse:
+    """Mint a short-lived ACS VoIP_JOIN token (no DB / no Teams meeting)."""
+    if not acs_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="ACS is disabled. Set ACS_ENABLED=true to run smoke tests.",
+        )
+    try:
+        creds = issue_voip_join_token()
+    except AcsConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"ACS token error: {exc}") from exc
+    return SmokeAcsTokenResponse(
+        user_id=creds.user_id,
+        token=creds.token,
+        expires_on=creds.expires_on,
     )
 
 
@@ -212,6 +253,10 @@ def create_session(
     if program is None:
         raise HTTPException(status_code=404, detail="Program not found")
 
+    join_opens = payload.join_opens_minutes_before
+    if join_opens is None:
+        join_opens = default_join_opens_minutes()
+
     session = GdSession(
         program_id=payload.program_id,
         label=payload.label,
@@ -220,7 +265,11 @@ def create_session(
         duration_minutes=payload.duration_minutes,
         assignment_strategy=payload.assignment_strategy,
         status="draft",
+        track=payload.track,
+        topic=payload.topic,
         professor_email=payload.professor_email,
+        professor_name=payload.professor_name,
+        join_opens_minutes_before=join_opens,
         created_by=admin.id,
     )
     db.add(session)
@@ -241,6 +290,32 @@ def create_session(
 
     db.commit()
     session = _session_query(db, session.id)
+    assert session is not None
+    return serialize_session(session)
+
+
+@router.patch("/sessions/{session_id}", response_model=GdSessionResponse)
+def update_session(
+    session_id: uuid.UUID,
+    payload: UpdateGdSessionRequest,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if session.status in {"completed", "scored"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot update session when status is '{session.status}'",
+        )
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(session, key, value)
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    session = _session_query(db, session_id)
     assert session is not None
     return serialize_session(session)
 
@@ -509,12 +584,18 @@ def send_invites(
     session = _session_query(db, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="GD session not found")
-    if not session.join_url:
+    if (session.track or "online") == "online" and not session.join_url:
         raise HTTPException(status_code=400, detail="Create a Teams meeting before sending invites")
     if session.scheduled_at is None:
         raise HTTPException(status_code=400, detail="scheduled_at is required")
     if not session.participants:
         raise HTTPException(status_code=400, detail="No participants to invite")
+
+    portal_base = os.environ.get(
+        "CAMPUS_PORTAL_BASE_URL", "https://admissions-frontend-phi.vercel.app/campus"
+    ).rstrip("/")
+    portal_url = portal_base
+    join_opens = session.join_opens_minutes_before or default_join_opens_minutes()
 
     program = db.get(Program, session.program_id)
     program_name = program.name if program else "Program"
@@ -524,6 +605,18 @@ def send_invites(
     for p in session.participants:
         app = p.application
         applicant = app.applicant if app else None
+        if app is None:
+            results.append(
+                {
+                    "application_id": str(p.application_id),
+                    "email": None,
+                    "success": False,
+                    "detail": "application missing",
+                }
+            )
+            continue
+
+        credential, plaintext_password = generate_credentials(db, app)
         email_ok, detail = send_gd_invite_email(
             to_email=applicant.email if applicant else None,
             applicant_name=applicant.full_name if applicant else None,
@@ -531,8 +624,11 @@ def send_invites(
             session_label=session.label or "Group Discussion",
             scheduled_at=session.scheduled_at,
             duration_minutes=session.duration_minutes,
-            join_url=session.join_url,
-            application_number=app.application_number if app else None,
+            portal_url=portal_url,
+            temp_username=credential.temp_username,
+            temp_password=plaintext_password,
+            application_number=app.application_number,
+            join_opens_minutes_before=join_opens,
         )
         p.invite_status = "sent" if email_ok else "failed"
         p.invite_sent_at = now if email_ok else p.invite_sent_at
@@ -548,15 +644,16 @@ def send_invites(
             {
                 "application_id": str(p.application_id),
                 "email": applicant.email if applicant else None,
+                "temp_username": credential.temp_username,
                 "success": email_ok,
                 "detail": detail,
             }
         )
 
-    if session.professor_email:
+    if session.professor_email and session.join_url:
         mod_ok, mod_detail = send_gd_moderator_invite_email(
             to_email=session.professor_email,
-            moderator_name=None,
+            moderator_name=session.professor_name,
             program_name=program_name,
             session_label=session.label or "Group Discussion",
             scheduled_at=session.scheduled_at,
@@ -578,3 +675,100 @@ def send_invites(
     db.commit()
 
     return SendInvitesResponse(session_id=session_id, status=session.status, results=results)
+
+
+@router.post("/sessions/{session_id}/start", response_model=StartGdSessionResponse)
+def start_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> StartGdSessionResponse:
+    """Host Start — reveals topic and starts the countdown clock."""
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if session.status not in {"invited", "meeting_ready", "live"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot start session when status is '{session.status}'",
+        )
+    if not session.topic:
+        raise HTTPException(status_code=400, detail="Set topic before starting the GD")
+
+    now = datetime.now(timezone.utc)
+    if session.started_at is None:
+        session.started_at = now
+    session.status = "live"
+    session.updated_at = now
+    db.commit()
+
+    ends_at = session.started_at + timedelta(minutes=session.duration_minutes or 60)
+    return StartGdSessionResponse(
+        session_id=session.id,
+        status=session.status,
+        started_at=session.started_at,
+        ends_at=ends_at,
+        topic=session.topic,
+    )
+
+
+@router.post("/sessions/{session_id}/acs-join", response_model=AcsJoinResponse)
+def admin_acs_join(
+    session_id: uuid.UUID,
+    payload: AdminAcsJoinRequest,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> AcsJoinResponse:
+    """Admin/host ACS join credentials for an existing Teams meeting (FE-less testing)."""
+    if not acs_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="ACS is disabled. Set ACS_ENABLED=true and ACS_CONNECTION_STRING.",
+        )
+
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if not session.join_url or not session.teams_meeting_id:
+        raise HTTPException(status_code=400, detail="Create a Teams meeting first")
+
+    if (
+        payload.role == "candidate"
+        and not payload.bypass_join_window
+        and not join_window_open(session)
+    ):
+        opens = join_opens_at(session)
+        raise HTTPException(
+            status_code=403,
+            detail="Join window is closed. Opens at "
+            + (opens.isoformat() if opens else "scheduled_at − join_opens_minutes_before"),
+        )
+
+    try:
+        creds = issue_voip_join_token()
+    except AcsConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"ACS token error: {exc}") from exc
+
+    ends_at = None
+    if session.started_at is not None:
+        ends_at = session.started_at + timedelta(minutes=session.duration_minutes or 60)
+
+    return AcsJoinResponse(
+        session_id=session.id,
+        role=payload.role,
+        display_name=payload.display_name,
+        acs_user_id=creds.user_id,
+        acs_token=creds.token,
+        acs_token_expires_on=creds.expires_on,
+        teams_meeting_id=session.teams_meeting_id,
+        teams_join_url=session.join_url,
+        status=session.status,
+        scheduled_at=session.scheduled_at,
+        join_opens_at=join_opens_at(session),
+        started_at=session.started_at,
+        ends_at=ends_at,
+        topic=session.topic if (payload.role == "host" or topic_visible(session)) else None,
+        duration_minutes=session.duration_minutes,
+    )
