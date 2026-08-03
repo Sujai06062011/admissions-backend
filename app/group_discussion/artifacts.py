@@ -29,23 +29,31 @@ def ingest_session_artifacts(db: Session, session: GdSession) -> GdSession:
     session.updated_at = datetime.now(timezone.utc)
     db.flush()
 
+    errors: list[str] = []
+    recording = None
+    transcript = None
+
+    # Fetch independently — tenant may allow recordings but block Graph transcripts.
     try:
         recording = fetch_latest_recording(session.teams_meeting_id)
+    except TeamsGraphApiError as exc:
+        errors.append(f"recording Graph {exc.status_code}: {exc.body[:300]}")
+
+    try:
         transcript = fetch_latest_transcript(session.teams_meeting_id)
     except TeamsGraphApiError as exc:
-        session.artifacts_status = "failed"
-        session.artifacts_error = f"Graph {exc.status_code}: {exc.body[:500]}"
-        session.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(session)
-        return session
+        errors.append(f"transcript Graph {exc.status_code}: {exc.body[:300]}")
 
     if recording is None and transcript is None:
-        session.artifacts_status = "pending"
-        session.artifacts_error = (
-            "No recording or transcript available yet. "
-            "Wait a few minutes after the meeting ends, ensure recording completed, then retry."
-        )
+        if errors:
+            session.artifacts_status = "failed"
+            session.artifacts_error = " | ".join(errors)[:800]
+        else:
+            session.artifacts_status = "pending"
+            session.artifacts_error = (
+                "No recording or transcript available yet. "
+                "Wait a few minutes after the meeting ends, ensure recording completed, then retry."
+            )
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(session)
@@ -69,8 +77,9 @@ def ingest_session_artifacts(db: Session, session: GdSession) -> GdSession:
         session.transcript_vtt = transcript.vtt_text
         session.transcript_graph_id = transcript.transcript_id
 
+    # Partial success is OK (e.g. video in Supabase while transcript API is tenant-blocked).
     session.artifacts_status = "ready"
-    session.artifacts_error = None
+    session.artifacts_error = " | ".join(errors)[:800] if errors else None
     session.artifacts_fetched_at = datetime.now(timezone.utc)
     session.status = "completed"
     session.updated_at = datetime.now(timezone.utc)
