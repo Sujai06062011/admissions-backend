@@ -32,11 +32,22 @@ All routes require admin bearer token.
 | GET | `/admin/group-discussion/eligible?program_id=` | Pool: both tests done, not in active GD |
 | POST | `/admin/group-discussion/sessions` | Create draft (+ optional auto-assign) |
 | POST | `/admin/group-discussion/sessions/{id}/assign` | Re-assign (composite / gender_mix / random / manual) |
-| POST | `/admin/group-discussion/sessions/{id}/create-meeting` | Teams meeting → store join_url |
+| POST | `/admin/group-discussion/sessions/{id}/create-meeting` | Teams meeting (auto-record + transcript) |
+| POST | `/admin/group-discussion/sessions/{id}/enable-recording` | PATCH older meetings to auto-record |
 | POST | `/admin/group-discussion/sessions/{id}/send-invites` | Email each participant |
+| POST | `/admin/group-discussion/sessions/{id}/fetch-artifacts` | After call: recording → Supabase, transcript → DB |
 | GET | `/admin/group-discussion/sessions?program_id=` | List |
 | GET | `/admin/group-discussion/sessions/{id}` | Detail |
 | POST | `/admin/group-discussion/smoke/create-meeting` | Graph-only smoke (no DB) |
+
+Schema migration for artifact columns:
+
+```bash
+python scripts/add_gd_artifact_columns.py
+```
+
+After a meeting ends, wait a few minutes for Teams to finish processing, then call
+`fetch-artifacts`. Graph webhooks can replace polling later.
 
 Example create body:
 

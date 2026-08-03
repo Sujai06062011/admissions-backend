@@ -39,6 +39,16 @@ class GdSession(Base):
     teams_meeting_id: Mapped[str | None] = mapped_column(Text)
     join_url: Mapped[str | None] = mapped_column(Text)
     professor_email: Mapped[str | None] = mapped_column(Text)
+    # Post-meeting artifacts (Teams → Supabase / DB)
+    recording_storage_path: Mapped[str | None] = mapped_column(Text)
+    recording_graph_id: Mapped[str | None] = mapped_column(Text)
+    transcript_text: Mapped[str | None] = mapped_column(Text)
+    transcript_vtt: Mapped[str | None] = mapped_column(Text)
+    transcript_graph_id: Mapped[str | None] = mapped_column(Text)
+    # pending | processing | ready | failed
+    artifacts_status: Mapped[str | None] = mapped_column(Text, server_default=text("'pending'"))
+    artifacts_error: Mapped[str | None] = mapped_column(Text)
+    artifacts_fetched_at: Mapped[datetime | None] = mapped_column()
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("admin_users.id")
     )

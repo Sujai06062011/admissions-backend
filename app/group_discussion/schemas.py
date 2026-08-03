@@ -65,6 +65,11 @@ class GdSessionResponse(BaseModel):
     teams_meeting_id: str | None
     join_url: str | None
     professor_email: str | None
+    recording_storage_path: str | None = None
+    transcript_text: str | None = None
+    artifacts_status: str | None = None
+    artifacts_error: str | None = None
+    artifacts_fetched_at: datetime | None = None
     created_at: datetime | None
     participants: list[GdParticipantResponse]
 

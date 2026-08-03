@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.auth.dependencies import get_current_admin
 from app.db.session import get_db
+from app.group_discussion.artifacts import ingest_session_artifacts
 from app.group_discussion.assignment import pick_participants
 from app.group_discussion.eligibility import list_eligible_applications
 from app.group_discussion.schemas import (
@@ -31,6 +32,7 @@ from app.group_discussion.teams_graph import (
     TeamsGraphConfig,
     TeamsGraphConfigError,
     create_online_meeting,
+    enable_meeting_recording,
     teams_graph_enabled,
 )
 from app.models.core import AdminUser, Program
@@ -349,8 +351,77 @@ def create_session_meeting(
     session.teams_meeting_id = meeting.meeting_id
     session.join_url = meeting.join_url
     session.status = "meeting_ready"
+    session.artifacts_status = "pending"
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    session = _session_query(db, session_id)
+    assert session is not None
+    return serialize_session(session)
+
+
+@router.post("/sessions/{session_id}/enable-recording", response_model=GdSessionResponse)
+def enable_session_recording(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    """PATCH Teams meeting to auto-record + transcription (for meetings created earlier)."""
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if not session.teams_meeting_id:
+        raise HTTPException(status_code=400, detail="Session has no Teams meeting yet")
+    if not teams_graph_enabled():
+        raise HTTPException(status_code=503, detail="Teams Graph is disabled.")
+
+    try:
+        enable_meeting_recording(session.teams_meeting_id)
+    except TeamsGraphConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TeamsGraphApiError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Microsoft Graph error ({exc.status_code}): {exc.body}",
+        ) from exc
+
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    session = _session_query(db, session_id)
+    assert session is not None
+    return serialize_session(session)
+
+
+@router.post("/sessions/{session_id}/fetch-artifacts", response_model=GdSessionResponse)
+def fetch_session_artifacts(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    """After the meeting ends: pull recording → Supabase and transcript → DB.
+
+    Poll Graph (recordings/transcripts appear a few minutes after the call).
+    Webhooks can replace this later; this keeps the demo reliable without
+    Azure change-notification setup.
+    """
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if not session.teams_meeting_id:
+        raise HTTPException(status_code=400, detail="Session has no Teams meeting yet")
+    if not teams_graph_enabled():
+        raise HTTPException(status_code=503, detail="Teams Graph is disabled.")
+
+    try:
+        session = ingest_session_artifacts(db, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # Supabase / unexpected
+        session.artifacts_status = "failed"
+        session.artifacts_error = str(exc)[:500]
+        session.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Artifact ingest failed: {exc}") from exc
 
     session = _session_query(db, session_id)
     assert session is not None

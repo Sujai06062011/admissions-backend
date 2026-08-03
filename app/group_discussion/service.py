@@ -48,6 +48,11 @@ def serialize_session(session: GdSession) -> GdSessionResponse:
         teams_meeting_id=session.teams_meeting_id,
         join_url=session.join_url,
         professor_email=session.professor_email,
+        recording_storage_path=session.recording_storage_path,
+        transcript_text=session.transcript_text,
+        artifacts_status=session.artifacts_status,
+        artifacts_error=session.artifacts_error,
+        artifacts_fetched_at=session.artifacts_fetched_at,
         created_at=session.created_at,
         participants=participants,
     )
