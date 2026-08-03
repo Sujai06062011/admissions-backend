@@ -36,6 +36,8 @@ All routes require admin bearer token.
 | POST | `/admin/group-discussion/sessions/{id}/enable-recording` | PATCH older meetings to auto-record |
 | POST | `/admin/group-discussion/sessions/{id}/send-invites` | Email each participant |
 | POST | `/admin/group-discussion/sessions/{id}/fetch-artifacts` | After call: recording → Supabase, transcript → DB |
+| POST | `/admin/group-discussion/sessions/{id}/upload-transcript` | Manual VTT/plain transcript if Graph blocked |
+| POST | `/admin/group-discussion/sessions/{id}/score` | Claude GDPI scores per participant |
 | GET | `/admin/group-discussion/sessions?program_id=` | List |
 | GET | `/admin/group-discussion/sessions/{id}` | Detail |
 | POST | `/admin/group-discussion/smoke/create-meeting` | Graph-only smoke (no DB) |

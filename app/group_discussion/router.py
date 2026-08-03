@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.group_discussion.artifacts import ingest_session_artifacts
 from app.group_discussion.assignment import pick_participants
 from app.group_discussion.eligibility import list_eligible_applications
+from app.group_discussion.score_runner import score_session_participants
 from app.group_discussion.schemas import (
     AssignGdSessionRequest,
     CreateGdSessionRequest,
@@ -464,6 +465,34 @@ def upload_session_transcript(
         session.status = "completed"
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    session = _session_query(db, session_id)
+    assert session is not None
+    return serialize_session(session)
+
+
+@router.post("/sessions/{session_id}/score", response_model=GdSessionResponse)
+def score_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    """Claude GDPI scoring per participant from stored transcript.
+
+    Dimensions (0-10): leadership, communication, teamwork, attitude, content,
+    grammar. overall_score is equal-weight blend scaled to 0-100.
+    Speakers are matched to applicants by name; unmatched speakers are skipped.
+    """
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if not (session.transcript_text or session.transcript_vtt):
+        raise HTTPException(status_code=400, detail="Fetch or upload a transcript before scoring")
+
+    try:
+        score_session_participants(db, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     session = _session_query(db, session_id)
     assert session is not None

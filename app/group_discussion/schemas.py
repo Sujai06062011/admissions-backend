@@ -51,6 +51,12 @@ class GdParticipantResponse(BaseModel):
     role: str
     invite_status: str | None = None
     invite_sent_at: datetime | None = None
+    scores: dict | None = None
+    overall_score: float | None = None
+    score_rationale: str | None = None
+    speaker_labels: list[str] | None = None
+    scoring_status: str | None = None
+    scored_at: datetime | None = None
 
 
 class GdSessionResponse(BaseModel):

@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import List
+from typing import Any, List
 
-from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -34,18 +34,16 @@ class GdSession(Base):
     assignment_strategy: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'manual'")
     )
-    # draft → meeting_ready → invited → cancelled (completed/scored later)
+    # draft → meeting_ready → invited → completed → scored
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'draft'"))
     teams_meeting_id: Mapped[str | None] = mapped_column(Text)
     join_url: Mapped[str | None] = mapped_column(Text)
     professor_email: Mapped[str | None] = mapped_column(Text)
-    # Post-meeting artifacts (Teams → Supabase / DB)
     recording_storage_path: Mapped[str | None] = mapped_column(Text)
     recording_graph_id: Mapped[str | None] = mapped_column(Text)
     transcript_text: Mapped[str | None] = mapped_column(Text)
     transcript_vtt: Mapped[str | None] = mapped_column(Text)
     transcript_graph_id: Mapped[str | None] = mapped_column(Text)
-    # pending | processing | ready | failed
     artifacts_status: Mapped[str | None] = mapped_column(Text, server_default=text("'pending'"))
     artifacts_error: Mapped[str | None] = mapped_column(Text)
     artifacts_fetched_at: Mapped[datetime | None] = mapped_column()
@@ -81,6 +79,14 @@ class GdParticipant(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'candidate'"))
     invite_sent_at: Mapped[datetime | None] = mapped_column()
     invite_status: Mapped[str | None] = mapped_column(Text, server_default=text("'pending'"))
+    # GDPI: leadership, communication, teamwork, attitude, content, grammar (0-10 each)
+    scores: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    overall_score: Mapped[float | None] = mapped_column(Numeric)
+    score_rationale: Mapped[str | None] = mapped_column(Text)
+    speaker_labels: Mapped[list[Any] | None] = mapped_column(JSONB)
+    # pending | scoring | scored | skipped | failed
+    scoring_status: Mapped[str | None] = mapped_column(Text)
+    scored_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime | None] = mapped_column(server_default=text("now()"))
 
     gd_session: Mapped["GdSession"] = relationship(back_populates="participants")

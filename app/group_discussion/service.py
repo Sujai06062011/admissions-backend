@@ -34,6 +34,12 @@ def serialize_session(session: GdSession) -> GdSessionResponse:
                 role=p.role,
                 invite_status=p.invite_status,
                 invite_sent_at=p.invite_sent_at,
+                scores=p.scores,
+                overall_score=float(p.overall_score) if p.overall_score is not None else None,
+                score_rationale=p.score_rationale,
+                speaker_labels=list(p.speaker_labels) if p.speaker_labels else None,
+                scoring_status=p.scoring_status,
+                scored_at=p.scored_at,
             )
         )
     return GdSessionResponse(
