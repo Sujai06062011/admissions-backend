@@ -159,12 +159,13 @@ def match_speaker_to_participant(
 def compute_overall_score(dimension_scores: dict[str, float]) -> float:
     """Equal-weight average of 0-10 dimensions → overall on 0-10 (for UI).
 
-    For composite preference weight later, scale with overall_score * 10 (→ 0-100).
+    Rounded to the nearest whole number. For composite later, scale with
+    overall_score * 10 (→ 0-100).
     """
     total = 0.0
     for dim, weight in OVERALL_WEIGHTS.items():
         total += float(dimension_scores.get(dim, 0.0)) * weight
-    return round(total, 2)
+    return float(round(total))
 
 
 def _build_prompt(
