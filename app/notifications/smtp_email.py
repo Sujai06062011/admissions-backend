@@ -126,3 +126,37 @@ def send_interview_invite_email(
     )
 
     return _send_smtp_email(to_email, subject, html)
+
+
+def send_gd_invite_email(
+    to_email: str | None,
+    applicant_name: str | None,
+    program_name: str,
+    session_label: str,
+    scheduled_at: datetime,
+    duration_minutes: int,
+    join_url: str,
+    application_number: str | None,
+) -> tuple[bool, str]:
+    """Sends a Group Discussion Teams invite. Same (success, detail) contract."""
+    if not to_email:
+        return False, "applicant has no email address on file"
+
+    greeting_name = applicant_name or "Applicant"
+    app_line = (
+        f"<b>Application No:</b> {application_number}<br>" if application_number else ""
+    )
+    subject = "Your Group Discussion Has Been Scheduled"
+    html = (
+        f"<p>Dear {greeting_name},</p>"
+        f"<p>{app_line}"
+        f"<b>Program:</b> {program_name}<br>"
+        f"<b>Group:</b> {session_label}<br>"
+        f"<b>Date &amp; Time:</b> {_format_ist(scheduled_at)}<br>"
+        f"<b>Duration:</b> {duration_minutes} minutes</p>"
+        "<p>Please join the Microsoft Teams meeting using the link below:</p>"
+        f'<p><a href="{join_url}">{join_url}</a></p>'
+        "<p>Regards,<br>Admin Team</p>"
+        '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
+    )
+    return _send_smtp_email(to_email, subject, html)

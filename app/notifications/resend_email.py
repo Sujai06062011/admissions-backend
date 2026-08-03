@@ -126,3 +126,49 @@ def send_interview_invite_email(
     except resend.exceptions.ResendError as exc:
         logger.error("Resend interview-invite email failed for %s: %s", to_email, exc)
         return False, str(exc)
+
+
+def send_gd_invite_email(
+    to_email: str | None,
+    applicant_name: str | None,
+    program_name: str,
+    session_label: str,
+    scheduled_at: datetime,
+    duration_minutes: int,
+    join_url: str,
+    application_number: str | None,
+) -> tuple[bool, str]:
+    """Sends a Group Discussion Teams invite via Resend. Same contract as SMTP."""
+    if not to_email:
+        return False, "applicant has no email address on file"
+
+    resend.api_key = os.environ["RESEND_API_KEY"]
+    from_email = _from_header()
+
+    greeting_name = applicant_name or "Applicant"
+    app_line = (
+        f"<b>Application No:</b> {application_number}<br>" if application_number else ""
+    )
+    subject = "Your Group Discussion Has Been Scheduled"
+    html = (
+        f"<p>Dear {greeting_name},</p>"
+        f"<p>{app_line}"
+        f"<b>Program:</b> {program_name}<br>"
+        f"<b>Group:</b> {session_label}<br>"
+        f"<b>Date &amp; Time:</b> {_format_ist(scheduled_at)}<br>"
+        f"<b>Duration:</b> {duration_minutes} minutes</p>"
+        "<p>Please join the Microsoft Teams meeting using the link below:</p>"
+        f'<p><a href="{join_url}">{join_url}</a></p>'
+        "<p>Regards,<br>Admin Team</p>"
+        '<p style="color:#888;font-size:12px;">Do not reply to this auto-generated email.</p>'
+    )
+
+    try:
+        response = resend.Emails.send(
+            {"from": from_email, "to": to_email, "subject": subject, "html": html}
+        )
+        message_id = response.get("id", "") if isinstance(response, dict) else getattr(response, "id", "")
+        return True, message_id
+    except resend.exceptions.ResendError as exc:
+        logger.error("Resend GD-invite email failed for %s: %s", to_email, exc)
+        return False, str(exc)

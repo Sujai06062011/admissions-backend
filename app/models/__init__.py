@@ -1,6 +1,7 @@
 from app.db.base import Base
 from app.models.core import AdminUser, Program, Tenant
 from app.models.final import FinalDecision, Interview, Notification
+from app.models.group_discussion import GdParticipant, GdSession
 from app.models.scheduling import CampusSchedule, CampusSession
 from app.models.stage1 import Applicant, Application, ProfileData, UploadedDocument
 from app.models.stage2 import AdminDecision, PreferenceConfig, PreferenceMatchResult
@@ -38,4 +39,6 @@ __all__ = [
     "FinalDecision",
     "Interview",
     "Notification",
+    "GdSession",
+    "GdParticipant",
 ]

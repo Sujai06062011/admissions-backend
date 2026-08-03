@@ -11,3 +11,4 @@ _active_module = resend_email if _PROVIDER == "resend" else smtp_email
 
 send_invite_email = _active_module.send_invite_email
 send_interview_invite_email = _active_module.send_interview_invite_email
+send_gd_invite_email = _active_module.send_gd_invite_email
