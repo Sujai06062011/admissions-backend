@@ -5,14 +5,18 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db
 from app.group_discussion.acs import AcsConfigError, acs_enabled, issue_voip_join_token
 from app.group_discussion.join_window import join_opens_at, join_window_open, topic_visible
-from app.group_discussion.schemas import AcsJoinResponse, CandidateAcsJoinRequest
+from app.group_discussion.schemas import (
+    AcsJoinResponse,
+    CandidateAcsJoinRequest,
+    CandidateGdSessionStateResponse,
+)
 from app.models.group_discussion import GdParticipant, GdSession
 from app.models.stage1 import Application
 
@@ -29,6 +33,55 @@ def _load_session(db: Session, session_id: uuid.UUID) -> GdSession | None:
             .selectinload(Application.applicant),
         )
     ).scalar_one_or_none()
+
+
+def _require_participant(session: GdSession, application_id: uuid.UUID) -> GdParticipant:
+    participant = next(
+        (p for p in session.participants if p.application_id == application_id),
+        None,
+    )
+    if participant is None:
+        raise HTTPException(status_code=403, detail="You are not assigned to this GD session")
+    return participant
+
+
+@router.get(
+    "/sessions/{session_id}/state",
+    response_model=CandidateGdSessionStateResponse,
+)
+def candidate_session_state(
+    session_id: uuid.UUID,
+    application_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+) -> CandidateGdSessionStateResponse:
+    """Poll for host Start / topic / end without minting a new ACS token."""
+    session = _load_session(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    _require_participant(session, application_id)
+
+    ends_at = None
+    if session.started_at is not None:
+        ends_at = session.started_at + timedelta(minutes=session.duration_minutes or 60)
+
+    return CandidateGdSessionStateResponse(
+        session_id=session.id,
+        status=session.status,
+        scheduled_at=session.scheduled_at,
+        join_opens_at=join_opens_at(session),
+        join_enabled=bool(
+            session.join_url
+            and (session.track or "online") == "online"
+            and session.status in {"invited", "meeting_ready", "live"}
+            and join_window_open(session)
+        ),
+        started_at=session.started_at,
+        ends_at=ends_at,
+        ended_at=session.ended_at,
+        topic=session.topic if topic_visible(session) else None,
+        duration_minutes=session.duration_minutes,
+        track=session.track or "online",
+    )
 
 
 @router.post("/sessions/{session_id}/acs-join", response_model=AcsJoinResponse)
@@ -58,12 +111,7 @@ def candidate_acs_join(
     if session.status in {"draft"}:
         raise HTTPException(status_code=400, detail="Session has not been invited yet")
 
-    participant = next(
-        (p for p in session.participants if p.application_id == payload.application_id),
-        None,
-    )
-    if participant is None:
-        raise HTTPException(status_code=403, detail="You are not assigned to this GD session")
+    participant = _require_participant(session, payload.application_id)
 
     if not join_window_open(session):
         opens = join_opens_at(session)

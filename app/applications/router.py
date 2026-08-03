@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session, selectinload
 from app.applications.numbering import build_application_number
 from app.applications.schemas import (
     ApplicationProfileResponse,
+    CandidateGdStatus,
     CandidateStatusResponse,
     CandidateTestAStatus,
     CandidateTestBStatus,
 )
+from app.group_discussion.candidate_status import build_candidate_gd_status
 from app.applications.storage import save_upload
 from app.db.session import get_db
 from app.models.core import Program, Tenant
@@ -273,6 +275,9 @@ def get_candidate_status(
 
     test_b_session = application.test_b_session
 
+    gd_raw = build_candidate_gd_status(db, application.id)
+    group_discussion = CandidateGdStatus(**gd_raw) if gd_raw else CandidateGdStatus(assigned=False)
+
     return CandidateStatusResponse(
         application_id=application.id,
         program_id=application.program_id,
@@ -290,4 +295,5 @@ def get_candidate_status(
             submitted=test_b_session is not None and test_b_session.recorded_at is not None,
             recorded_at=test_b_session.recorded_at if test_b_session else None,
         ),
+        group_discussion=group_discussion,
     )

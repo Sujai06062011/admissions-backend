@@ -34,6 +34,26 @@ class CandidateTestBStatus(BaseModel):
     recorded_at: datetime | None
 
 
+class CandidateGdStatus(BaseModel):
+    """Group Discussion card on /campus/portal. Topic is null until host Start."""
+
+    assigned: bool = False
+    session_id: uuid.UUID | None = None
+    track: str | None = None  # online | manual
+    label: str | None = None
+    scheduled_at: datetime | None = None
+    duration_minutes: int | None = None
+    status: str | None = None
+    join_opens_at: datetime | None = None
+    join_opens_minutes_before: int | None = None
+    join_enabled: bool = False
+    started_at: datetime | None = None
+    ends_at: datetime | None = None
+    ended_at: datetime | None = None
+    topic: str | None = None
+    completed: bool = False
+
+
 class CandidateStatusResponse(BaseModel):
     application_id: uuid.UUID
     program_id: uuid.UUID
@@ -43,3 +63,4 @@ class CandidateStatusResponse(BaseModel):
     application_number: str | None = None
     test_a: CandidateTestAStatus
     test_b: CandidateTestBStatus
+    group_discussion: CandidateGdStatus | None = None

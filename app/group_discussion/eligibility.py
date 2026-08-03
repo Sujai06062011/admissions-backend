@@ -15,7 +15,7 @@ from app.models.group_discussion import GdParticipant, GdSession
 from app.models.stage1 import Application
 from app.preferences.matching import normalized_test_b_score
 
-ACTIVE_GD_STATUSES = ("draft", "meeting_ready", "invited")
+ACTIVE_GD_STATUSES = ("draft", "meeting_ready", "invited", "live")
 ELIGIBLE_APP_STATUSES = ("moved_to_campus", "testing_complete")
 
 

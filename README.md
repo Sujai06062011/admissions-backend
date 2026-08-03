@@ -81,7 +81,10 @@ All routes require admin bearer token (except `/campus/group-discussion/*`).
 | POST | `/admin/group-discussion/sessions/{id}/enable-recording` | PATCH older meetings to auto-record |
 | POST | `/admin/group-discussion/sessions/{id}/send-invites` | Portal invite + regen temp password (no Teams URL) |
 | POST | `/admin/group-discussion/sessions/{id}/start` | Host Start — topic + timer |
+| POST | `/admin/group-discussion/sessions/{id}/end` | Host End — mark completed |
 | POST | `/admin/group-discussion/sessions/{id}/acs-join` | ACS token + meeting URL (admin/host test) |
+| GET | `/applications/{id}/candidate-status` | Includes `group_discussion` portal card fields |
+| GET | `/campus/group-discussion/sessions/{id}/state?application_id=` | Poll topic/timer after join |
 | POST | `/campus/group-discussion/sessions/{id}/acs-join` | Candidate ACS join (join window + topic gate) |
 | POST | `/admin/group-discussion/sessions/{id}/fetch-artifacts` | After call: recording → Supabase, transcript → DB |
 | POST | `/admin/group-discussion/sessions/{id}/upload-transcript` | Manual VTT/plain transcript if Graph blocked |

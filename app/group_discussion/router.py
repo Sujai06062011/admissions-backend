@@ -42,6 +42,7 @@ from app.group_discussion.schemas import (
     SmokeAcsTokenResponse,
     SmokeCreateMeetingRequest,
     SmokeCreateMeetingResponse,
+    EndGdSessionResponse,
     StartGdSessionResponse,
     UpdateGdSessionRequest,
     UploadTranscriptRequest,
@@ -709,6 +710,37 @@ def start_session(
         started_at=session.started_at,
         ends_at=ends_at,
         topic=session.topic,
+    )
+
+
+@router.post("/sessions/{session_id}/end", response_model=EndGdSessionResponse)
+def end_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> EndGdSessionResponse:
+    """Host End — marks session completed so clients can hang up and show done state."""
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if session.status in {"completed", "scored"}:
+        ended = session.ended_at or datetime.now(timezone.utc)
+        return EndGdSessionResponse(
+            session_id=session.id, status=session.status, ended_at=ended
+        )
+    if session.status not in {"live", "invited", "meeting_ready"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot end session when status is '{session.status}'",
+        )
+
+    now = datetime.now(timezone.utc)
+    session.ended_at = now
+    session.status = "completed"
+    session.updated_at = now
+    db.commit()
+    return EndGdSessionResponse(
+        session_id=session.id, status=session.status, ended_at=now
     )
 
 

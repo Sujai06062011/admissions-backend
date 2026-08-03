@@ -178,3 +178,25 @@ class StartGdSessionResponse(BaseModel):
     started_at: datetime
     ends_at: datetime
     topic: str | None
+
+
+class EndGdSessionResponse(BaseModel):
+    session_id: uuid.UUID
+    status: str
+    ended_at: datetime
+
+
+class CandidateGdSessionStateResponse(BaseModel):
+    """Pollable session state for the custom GD UI (topic appears after host Start)."""
+
+    session_id: uuid.UUID
+    status: str
+    scheduled_at: datetime | None
+    join_opens_at: datetime | None
+    join_enabled: bool
+    started_at: datetime | None
+    ends_at: datetime | None
+    ended_at: datetime | None
+    topic: str | None
+    duration_minutes: int
+    track: str
