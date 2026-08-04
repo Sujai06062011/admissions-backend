@@ -28,6 +28,11 @@ class CandidateListItem(BaseModel):
     preference_match_score: float | None
     test_a_score: float | None
     test_b_score: float | None
+    # GD overall on 0-10 (display as X.X). None until scored.
+    gd_score: float | None = None
+    # "online" | "manual" from the candidate's latest GD session, or None if
+    # not yet packed into a group.
+    gd_track: str | None = None
     # None = no proctoring review yet (no Test B recording, or snapshots not
     # reviewed yet); the main applications table only needs to know "flag it
     # or don't" without loading the full review notes/snapshots, which the

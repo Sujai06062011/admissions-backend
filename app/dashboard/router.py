@@ -1,4 +1,5 @@
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -16,6 +17,7 @@ from app.dashboard.schemas import (
 from app.db.session import get_db
 from app.interview_engine.storage import create_recording_signed_url, create_snapshot_signed_url
 from app.models.core import Program
+from app.models.group_discussion import GdParticipant
 from app.models.stage1 import Application, UploadedDocument
 from app.models.stage3_test_b import TestBSession
 from app.preferences.matching import compute_preference_match, normalized_test_b_score
@@ -65,9 +67,42 @@ def list_candidates(
     if status is not None:
         query = query.filter(Application.status == status)
 
+    apps = query.all()
+    app_ids = [app.id for app in apps]
+    gd_by_app: dict[uuid.UUID, list[GdParticipant]] = defaultdict(list)
+    if app_ids:
+        gd_rows = (
+            db.query(GdParticipant)
+            .options(selectinload(GdParticipant.gd_session))
+            .filter(
+                GdParticipant.application_id.in_(app_ids),
+                GdParticipant.role == "candidate",
+            )
+            .all()
+        )
+        for row in gd_rows:
+            gd_by_app[row.application_id].append(row)
+
+    def _gd_fields(application_id: uuid.UUID) -> tuple[float | None, str | None]:
+        parts = gd_by_app.get(application_id) or []
+        if not parts:
+            return None, None
+
+        def _ts(p: GdParticipant) -> datetime:
+            return p.scored_at or p.created_at or datetime.min.replace(tzinfo=timezone.utc)
+
+        latest = max(parts, key=_ts)
+        track = latest.gd_session.track if latest.gd_session else None
+        scored = [p for p in parts if p.overall_score is not None]
+        if not scored:
+            return None, track
+        best = max(scored, key=_ts)
+        return float(best.overall_score), track
+
     items = []
-    for app in query.all():
+    for app in apps:
         proctoring_review = app.test_b_session.proctoring_review if app.test_b_session else None
+        gd_score, gd_track = _gd_fields(app.id)
         items.append(
             CandidateListItem(
                 application_id=app.id,
@@ -83,6 +118,8 @@ def list_candidates(
                 test_b_score=normalized_test_b_score(
                     app.test_b_session.rubric_score if app.test_b_session else None
                 ),
+                gd_score=gd_score,
+                gd_track=gd_track,
                 proctoring_flagged=(
                     proctoring_review.get("flagged") if proctoring_review else None
                 ),

@@ -1,16 +1,49 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import uuid
 
 from sqlalchemy.orm import Session
 
+from app.models.group_discussion import GdParticipant
 from app.models.stage1 import Application
 from app.models.stage2 import PreferenceConfig, PreferenceMatchResult
 
 # Fields sourced from live session tables rather than the static profile_data
 # JSON blob — they only exist once the candidate reaches that stage, which is
 # exactly what lets the composite score grow progressively (screening ->
-# campus test -> campus interview) as each becomes available.
-SESSION_SOURCED_FIELDS = {"test_a_score", "test_b_score"}
+# campus test -> campus interview -> GD) as each becomes available.
+SESSION_SOURCED_FIELDS = {"test_a_score", "test_b_score", "gd_score"}
+
+# Default soft_weight when a program has never configured GD (10%).
+DEFAULT_GD_SOFT_WEIGHT = 0.10
+
+
+def ensure_gd_score_preference(db: Session, program_id: uuid.UUID) -> PreferenceConfig:
+    """Return the program's gd_score PreferenceConfig, inserting 10% if absent.
+
+    Does not commit — callers own the transaction. Does not overwrite an
+    existing row (admin-tuned weights are preserved).
+    """
+    existing = (
+        db.query(PreferenceConfig)
+        .filter(
+            PreferenceConfig.program_id == program_id,
+            PreferenceConfig.field_name == "gd_score",
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    config = PreferenceConfig(
+        program_id=program_id,
+        field_name="gd_score",
+        is_hard_cutoff=False,
+        cutoff_value=None,
+        soft_weight=DEFAULT_GD_SOFT_WEIGHT,
+    )
+    db.add(config)
+    db.flush()
+    return config
 
 
 def _numeric(value: object) -> float | None:
@@ -45,7 +78,33 @@ def normalized_test_b_score(rubric_score: dict | None) -> float | None:
     return (sum(values) / len(values)) * 10 if values else None
 
 
-def _session_sourced_actual(application: Application, field_name: str) -> float | None:
+def normalized_gd_score(overall_score: float | None) -> float | None:
+    """GD overall_score is 0-10; scale to 0-100 like Test A / Test B so a
+    soft_weight of 0.10 (10%) contributes on the same units as Campus Test.
+    """
+    if overall_score is None:
+        return None
+    return float(overall_score) * 10
+
+
+def latest_gd_overall_score(db: Session, application_id: uuid.UUID) -> float | None:
+    """Most recently scored GD overall (0-10), or None if unscored."""
+    row = (
+        db.query(GdParticipant)
+        .filter(
+            GdParticipant.application_id == application_id,
+            GdParticipant.role == "candidate",
+            GdParticipant.overall_score.isnot(None),
+        )
+        .order_by(GdParticipant.scored_at.desc().nullslast(), GdParticipant.created_at.desc())
+        .first()
+    )
+    return _numeric(row.overall_score) if row is not None else None
+
+
+def _session_sourced_actual(
+    db: Session, application: Application, field_name: str
+) -> float | None:
     if field_name == "test_a_score":
         return _numeric(application.test_a_session.score) if application.test_a_session else None
     if field_name == "test_b_score":
@@ -54,6 +113,8 @@ def _session_sourced_actual(application: Application, field_name: str) -> float 
             if application.test_b_session
             else None
         )
+    if field_name == "gd_score":
+        return normalized_gd_score(latest_gd_overall_score(db, application.id))
     return None
 
 
@@ -69,11 +130,11 @@ def compute_preference_match(db: Session, application: Application) -> Preferenc
     - reasons has one entry per config: {field, expected, actual, passed}. For
       hard-cutoff fields, passed means the cutoff was met. For soft-only fields (no
       cutoff), passed means the field was present and numeric in the profile data.
-    - test_a_score/test_b_score are read live from the TestASession/TestBSession
-      relationships rather than profile_data — they're None until the candidate
-      actually reaches that stage, so the composite score is whatever's available
-      at call time and is expected to be recomputed again as later stages complete
-      (see submit_test_a_session and process_interview_recording).
+    - test_a_score/test_b_score/gd_score are read live from session tables rather
+      than profile_data — they're None until the candidate reaches that stage, so
+      the composite score is whatever's available at call time and is expected to
+      be recomputed again as later stages complete (see submit_test_a_session,
+      process_interview_recording, and score_session).
 
     Persists onto the application's existing PreferenceMatchResult row (creating one
     if absent) but does not commit — callers own the transaction.
@@ -91,7 +152,7 @@ def compute_preference_match(db: Session, application: Application) -> Preferenc
 
     for config in configs:
         if config.field_name in SESSION_SOURCED_FIELDS:
-            raw_actual = _session_sourced_actual(application, config.field_name)
+            raw_actual = _session_sourced_actual(db, application, config.field_name)
         else:
             raw_actual = profile_data.get(config.field_name)
         actual = _numeric(raw_actual)

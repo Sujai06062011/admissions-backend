@@ -279,4 +279,6 @@ insert into preference_configs (program_id, field_name, is_hard_cutoff, cutoff_v
   union all
   select id, '12th_percentage', true, 80, 0.3 from programs where name = 'MBA Finance'
   union all
-  select id, 'certifications_count', false, null, 0.4 from programs where name = 'MBA Finance';
+  select id, 'certifications_count', false, null, 0.4 from programs where name = 'MBA Finance'
+  union all
+  select id, 'gd_score', false, null, 0.10 from programs where name = 'MBA Finance';

@@ -78,7 +78,11 @@ from app.models.group_discussion import GdParticipant, GdSession
 from app.models.stage1 import Application
 from app.models.stage2 import AdminDecision
 from app.notifications.email_dispatch import send_gd_invite_email, send_gd_moderator_invite_email
-from app.preferences.matching import normalized_test_b_score
+from app.preferences.matching import (
+    compute_preference_match,
+    ensure_gd_score_preference,
+    normalized_test_b_score,
+)
 from app.group_discussion.score_runner import score_session_participants
 
 router = APIRouter(prefix="/admin/group-discussion", tags=["group_discussion"])
@@ -999,6 +1003,21 @@ def score_session(
         score_session_participants(db, session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    session = _session_query(db, session_id)
+    assert session is not None
+
+    # Persist GD into composite (source of truth). Ensure a default 10% weight
+    # exists, then recompute each scored candidate's preference match.
+    ensure_gd_score_preference(db, session.program_id)
+    for participant in session.participants:
+        if participant.role != "candidate" or participant.overall_score is None:
+            continue
+        application = db.get(Application, participant.application_id)
+        if application is None:
+            continue
+        compute_preference_match(db, application)
+    db.commit()
 
     session = _session_query(db, session_id)
     assert session is not None

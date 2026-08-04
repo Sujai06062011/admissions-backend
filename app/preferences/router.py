@@ -14,7 +14,7 @@ from app.models.final import FinalDecision
 from app.models.stage1 import Application
 from app.models.stage2 import AdminDecision, PreferenceConfig, PreferenceMatchResult
 from app.notifications.invite import send_campus_invite
-from app.preferences.matching import compute_preference_match
+from app.preferences.matching import compute_preference_match, ensure_gd_score_preference
 from app.preferences.schemas import (
     ApplicationMatchResultItem,
     PreferenceConfigCreate,
@@ -57,6 +57,25 @@ def list_preference_configs(
 ) -> list[PreferenceConfig]:
     if db.get(Program, program_id) is None:
         raise HTTPException(status_code=404, detail="Program not found")
+
+    # Seed GD at 10% for programs that predate this field so Preferences UI
+    # and composite scoring both see a real PreferenceConfig row. When we
+    # insert for the first time, recompute matches so composites pick up GD.
+    had_gd = (
+        db.query(PreferenceConfig)
+        .filter(
+            PreferenceConfig.program_id == program_id,
+            PreferenceConfig.field_name == "gd_score",
+        )
+        .first()
+        is not None
+    )
+    ensure_gd_score_preference(db, program_id)
+    if not had_gd:
+        applications = db.query(Application).filter(Application.program_id == program_id).all()
+        for application in applications:
+            compute_preference_match(db, application)
+    db.commit()
 
     return (
         db.query(PreferenceConfig)
