@@ -117,11 +117,16 @@ def _replace_participants(db: Session, session: GdSession, apps: list[Applicatio
 
 
 def _reset_meeting_if_needed(session: GdSession) -> None:
-    """Membership change invalidates a prepared Teams meeting."""
-    if session.status == "meeting_ready":
+    """Clear Teams meeting when roster changes; keep In-person ready if no meeting."""
+    if session.teams_meeting_id or session.join_url:
         session.teams_meeting_id = None
         session.join_url = None
-        session.status = "draft"
+        if session.status == "meeting_ready":
+            session.status = "draft"
+        return
+    # In-person (and online drafts with no meeting yet): stay / restore meeting_ready
+    if session.track == "manual" and session.status == "draft":
+        session.status = "meeting_ready"
 
 
 def _require_reassignable(session: GdSession, label: str = "session") -> None:
