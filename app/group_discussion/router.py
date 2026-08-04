@@ -1157,10 +1157,18 @@ def end_session(
         return EndGdSessionResponse(
             session_id=session.id, status=session.status, ended_at=ended
         )
-    if session.status not in {"live", "invited", "meeting_ready"}:
+
+    track = session.track or "online"
+    # Online: must Start (live) before End — prevents ending a future invited session by mistake.
+    # In-person: no Start flow, so allow end from meeting_ready / invited / live.
+    allowed = {"live"} if track == "online" else {"live", "invited", "meeting_ready"}
+    if session.status not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot end session when status is '{session.status}'",
+            detail=(
+                f"Cannot end session when status is '{session.status}'. "
+                + ("Start the discussion first." if track == "online" else "")
+            ).strip(),
         )
 
     now = datetime.now(timezone.utc)
@@ -1171,6 +1179,38 @@ def end_session(
     return EndGdSessionResponse(
         session_id=session.id, status=session.status, ended_at=now
     )
+
+
+@router.post("/sessions/{session_id}/reopen", response_model=GdSessionResponse)
+def reopen_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdSessionResponse:
+    """Undo an accidental End — restores invited (or meeting_ready) if not scored."""
+    session = _session_query(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="GD session not found")
+    if session.status == "scored":
+        raise HTTPException(status_code=400, detail="Cannot reopen a scored session")
+    if session.status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only completed sessions can be reopened (status is '{session.status}')",
+        )
+
+    any_sent = any((p.invite_status == "sent") for p in (session.participants or []))
+    if any_sent or session.join_url:
+        session.status = "invited" if any_sent else "meeting_ready"
+    else:
+        session.status = "draft"
+    session.ended_at = None
+    session.started_at = None
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    session = _session_query(db, session_id)
+    assert session is not None
+    return serialize_session(session)
 
 
 @router.post("/sessions/{session_id}/acs-join", response_model=AcsJoinResponse)
