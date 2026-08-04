@@ -261,3 +261,21 @@ class PackGdSessionsRequest(BaseModel):
 
 class PackGdSessionsResponse(BaseModel):
     sessions: list[GdSessionResponse]
+
+
+class MoveGdParticipantsRequest(BaseModel):
+    """Move candidates between GD sessions (same or cross track), or unassign.
+
+    - to_session_id set: add application_ids to that session (removed from any prior active session).
+    - to_session_id null: unassign from their current active session(s).
+    - swap_with_application_id: with exactly one application_id, exchange seats with that person
+      (to_session_id must be the swap partner's current session).
+    """
+
+    application_ids: list[uuid.UUID] = Field(min_length=1)
+    to_session_id: uuid.UUID | None = None
+    swap_with_application_id: uuid.UUID | None = None
+
+
+class MoveGdParticipantsResponse(BaseModel):
+    sessions: list[GdSessionResponse]

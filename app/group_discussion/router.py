@@ -24,6 +24,7 @@ from app.group_discussion.acs import (
 from app.group_discussion.artifacts import ingest_session_artifacts
 from app.group_discussion.assignment import pick_participants
 from app.group_discussion.eligibility import (
+    ACTIVE_GD_STATUSES,
     eligible_response_for,
     list_eligible_applications,
     load_pack_pool,
@@ -43,6 +44,8 @@ from app.group_discussion.schemas import (
     EligibleCandidateResponse,
     GdProgramSettingsResponse,
     GdSessionResponse,
+    MoveGdParticipantsRequest,
+    MoveGdParticipantsResponse,
     PackGdSessionsRequest,
     PackGdSessionsResponse,
     PackPreviewGroup,
@@ -99,6 +102,9 @@ def _session_query(db: Session, session_id: uuid.UUID) -> GdSession | None:
     ).scalar_one_or_none()
 
 
+REASSIGNABLE_STATUSES = frozenset({"draft", "meeting_ready"})
+
+
 def _replace_participants(db: Session, session: GdSession, apps: list[Application]) -> None:
     session.participants.clear()
     db.flush()
@@ -106,7 +112,58 @@ def _replace_participants(db: Session, session: GdSession, apps: list[Applicatio
         session.participants.append(
             GdParticipant(application_id=app.id, role="candidate", invite_status="pending")
         )
+    session.target_size = max(len(apps), 2) if apps else session.target_size
     session.updated_at = datetime.now(timezone.utc)
+
+
+def _reset_meeting_if_needed(session: GdSession) -> None:
+    """Membership change invalidates a prepared Teams meeting."""
+    if session.status == "meeting_ready":
+        session.teams_meeting_id = None
+        session.join_url = None
+        session.status = "draft"
+
+
+def _require_reassignable(session: GdSession, label: str = "session") -> None:
+    if session.status not in REASSIGNABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot reassign participants when {label} status is '{session.status}'",
+        )
+
+
+def _active_session_for_app(db: Session, application_id: uuid.UUID) -> GdSession | None:
+    session_id = db.execute(
+        select(GdParticipant.gd_session_id)
+        .join(GdSession, GdSession.id == GdParticipant.gd_session_id)
+        .where(
+            GdParticipant.application_id == application_id,
+            GdSession.status.in_(ACTIVE_GD_STATUSES),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if session_id is None:
+        return None
+    return _session_query(db, session_id)
+
+
+def _load_applications(db: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID, Application]:
+    if not ids:
+        return {}
+    apps = (
+        db.execute(
+            select(Application)
+            .where(Application.id.in_(ids))
+            .options(
+                selectinload(Application.applicant),
+                selectinload(Application.profile_data),
+                selectinload(Application.preference_match_result),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {a.id: a for a in apps}
 
 
 # --- Smoke (unchanged behaviour) -------------------------------------------------
@@ -594,6 +651,167 @@ def assign_session(
     session = _session_query(db, session_id)
     assert session is not None
     return serialize_session(session)
+
+
+@router.post("/move-participants", response_model=MoveGdParticipantsResponse)
+def move_participants(
+    payload: MoveGdParticipantsRequest,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> MoveGdParticipantsResponse:
+    """Move or swap candidates across Online / In-person GD sessions (or unassign)."""
+    move_ids = list(dict.fromkeys(payload.application_ids))
+    apps_by_id = _load_applications(db, move_ids)
+    missing = [str(i) for i in move_ids if i not in apps_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Applications not found: {', '.join(missing)}")
+
+    touched: dict[uuid.UUID, GdSession] = {}
+
+    def touch(session: GdSession) -> None:
+        touched[session.id] = session
+
+    def membership_apps(session: GdSession) -> list[Application]:
+        # Ensure participants collection is loaded
+        ids = [p.application_id for p in session.participants]
+        loaded = _load_applications(db, ids)
+        # Preserve order; fall back if somehow missing
+        return [loaded[i] for i in ids if i in loaded]
+
+    # --- Swap (exactly one mover ↔ one partner) ---
+    if payload.swap_with_application_id is not None:
+        if len(move_ids) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Swap requires exactly one application_id",
+            )
+        if payload.to_session_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Swap requires to_session_id (partner's session)",
+            )
+        mover_id = move_ids[0]
+        partner_id = payload.swap_with_application_id
+        if mover_id == partner_id:
+            raise HTTPException(status_code=400, detail="Cannot swap a candidate with themselves")
+
+        partner_apps = _load_applications(db, [partner_id])
+        if partner_id not in partner_apps:
+            raise HTTPException(status_code=404, detail="Swap partner application not found")
+
+        mover_session = _active_session_for_app(db, mover_id)
+        partner_session = _active_session_for_app(db, partner_id)
+        if partner_session is None:
+            raise HTTPException(status_code=400, detail="Swap partner is not in an active GD session")
+        if partner_session.id != payload.to_session_id:
+            raise HTTPException(
+                status_code=400,
+                detail="to_session_id must be the swap partner's current session",
+            )
+        _require_reassignable(partner_session, "destination session")
+
+        if mover_session is None:
+            # Unassigned → take partner's seat; partner becomes unassigned
+            partner_members = [
+                a for a in membership_apps(partner_session) if a.id != partner_id
+            ] + [apps_by_id[mover_id]]
+            _reset_meeting_if_needed(partner_session)
+            _replace_participants(db, partner_session, partner_members)
+            touch(partner_session)
+        else:
+            if mover_session.id == partner_session.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Both candidates are already in the same session",
+                )
+            _require_reassignable(mover_session, "source session")
+            mover_members = [
+                a for a in membership_apps(mover_session) if a.id != mover_id
+            ] + [partner_apps[partner_id]]
+            partner_members = [
+                a for a in membership_apps(partner_session) if a.id != partner_id
+            ] + [apps_by_id[mover_id]]
+            _reset_meeting_if_needed(mover_session)
+            _reset_meeting_if_needed(partner_session)
+            _replace_participants(db, mover_session, mover_members)
+            _replace_participants(db, partner_session, partner_members)
+            touch(mover_session)
+            touch(partner_session)
+
+        db.commit()
+        return MoveGdParticipantsResponse(
+            sessions=[
+                serialize_session(s)
+                for sid in touched
+                if (s := _session_query(db, sid)) is not None
+            ]
+        )
+
+    # --- Move into a session (or unassign) ---
+    dest: GdSession | None = None
+    if payload.to_session_id is not None:
+        dest = _session_query(db, payload.to_session_id)
+        if dest is None:
+            raise HTTPException(status_code=404, detail="Destination GD session not found")
+        _require_reassignable(dest, "destination session")
+        touch(dest)
+
+    settings = get_or_default_settings(db, dest.program_id) if dest else None
+
+    # Resolve current sources (skip people already in destination)
+    sources: dict[uuid.UUID, GdSession] = {}
+    for aid in move_ids:
+        src = _active_session_for_app(db, aid)
+        if src is None:
+            continue
+        if dest is not None and src.id == dest.id:
+            continue
+        _require_reassignable(src, "source session")
+        sources[src.id] = src
+        touch(src)
+
+    if dest is not None:
+        dest_members = membership_apps(dest)
+        dest_ids = {a.id for a in dest_members}
+        projected = list(dest_members)
+        for aid in move_ids:
+            if aid not in dest_ids:
+                projected.append(apps_by_id[aid])
+                dest_ids.add(aid)
+        if settings and len(projected) > settings.max_group_size:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Destination group would have {len(projected)} candidates "
+                    f"(max {settings.max_group_size})"
+                ),
+            )
+
+    # Remove movers from source sessions, then add to destination
+    mover_set = set(move_ids)
+    for src in sources.values():
+        remaining = [a for a in membership_apps(src) if a.id not in mover_set]
+        _reset_meeting_if_needed(src)
+        _replace_participants(db, src, remaining)
+
+    if dest is not None:
+        dest_members = membership_apps(dest)
+        dest_ids = {a.id for a in dest_members}
+        for aid in move_ids:
+            if aid not in dest_ids:
+                dest_members.append(apps_by_id[aid])
+                dest_ids.add(aid)
+        _reset_meeting_if_needed(dest)
+        _replace_participants(db, dest, dest_members)
+
+    db.commit()
+    return MoveGdParticipantsResponse(
+        sessions=[
+            serialize_session(s)
+            for sid in touched
+            if (s := _session_query(db, sid)) is not None
+        ]
+    )
 
 
 @router.post("/sessions/{session_id}/create-meeting", response_model=GdSessionResponse)
