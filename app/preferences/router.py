@@ -257,6 +257,8 @@ def _apply_status_transition(application: Application, stage: str, decision: str
     elif decision in ("approved", "manual_override"):
         if stage == "stage2_move_to_campus":
             application.status = "moved_to_campus"
+        elif stage == "stage_group_discussion":
+            application.status = "group_discussion"
         elif stage == "stage3_call_for_interview":
             application.status = "called_for_interview"
         elif stage == "stage4_offer":

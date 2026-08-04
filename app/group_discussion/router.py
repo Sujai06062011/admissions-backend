@@ -23,30 +23,42 @@ from app.group_discussion.acs import (
 )
 from app.group_discussion.artifacts import ingest_session_artifacts
 from app.group_discussion.assignment import pick_participants
-from app.group_discussion.eligibility import list_eligible_applications
+from app.group_discussion.eligibility import (
+    eligible_response_for,
+    list_eligible_applications,
+    load_pack_pool,
+)
+from app.group_discussion.packing import shuffle_pack
 from app.group_discussion.join_window import (
     default_join_opens_minutes,
     join_opens_at,
     join_window_open,
     topic_visible,
 )
-from app.group_discussion.score_runner import score_session_participants
 from app.group_discussion.schemas import (
     AcsJoinResponse,
     AdminAcsJoinRequest,
     AssignGdSessionRequest,
     CreateGdSessionRequest,
     EligibleCandidateResponse,
+    GdProgramSettingsResponse,
     GdSessionResponse,
+    PackGdSessionsRequest,
+    PackGdSessionsResponse,
+    PackPreviewGroup,
+    PackPreviewRequest,
+    PackPreviewResponse,
     SendInvitesResponse,
     SmokeAcsTokenResponse,
     SmokeCreateMeetingRequest,
     SmokeCreateMeetingResponse,
     EndGdSessionResponse,
     StartGdSessionResponse,
+    UpdateGdProgramSettingsRequest,
     UpdateGdSessionRequest,
     UploadTranscriptRequest,
 )
+from app.group_discussion.settings import get_or_default_settings, upsert_settings
 from app.group_discussion.service import serialize_session
 from app.group_discussion.teams_graph import (
     TeamsGraphApiError,
@@ -61,8 +73,10 @@ from app.models.core import AdminUser, Program
 from app.models.final import Notification
 from app.models.group_discussion import GdParticipant, GdSession
 from app.models.stage1 import Application
+from app.models.stage2 import AdminDecision
 from app.notifications.email_dispatch import send_gd_invite_email, send_gd_moderator_invite_email
 from app.preferences.matching import normalized_test_b_score
+from app.group_discussion.score_runner import score_session_participants
 
 router = APIRouter(prefix="/admin/group-discussion", tags=["group_discussion"])
 
@@ -198,6 +212,198 @@ def get_eligible(
             )
         )
     return out
+
+
+# --- Program settings -------------------------------------------------------------
+
+
+@router.get("/settings", response_model=GdProgramSettingsResponse)
+def get_settings(
+    program_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdProgramSettingsResponse:
+    program = db.get(Program, program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    row = get_or_default_settings(db, program_id)
+    return GdProgramSettingsResponse(
+        program_id=program_id,
+        min_group_size=row.min_group_size,
+        max_group_size=row.max_group_size,
+        default_duration_minutes=row.default_duration_minutes,
+    )
+
+
+@router.put("/settings", response_model=GdProgramSettingsResponse)
+def put_settings(
+    payload: UpdateGdProgramSettingsRequest,
+    program_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> GdProgramSettingsResponse:
+    program = db.get(Program, program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    try:
+        row = upsert_settings(
+            db,
+            program_id,
+            min_group_size=payload.min_group_size,
+            max_group_size=payload.max_group_size,
+            default_duration_minutes=payload.default_duration_minutes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return GdProgramSettingsResponse(
+        program_id=row.program_id,
+        min_group_size=row.min_group_size,
+        max_group_size=row.max_group_size,
+        default_duration_minutes=row.default_duration_minutes,
+    )
+
+
+# --- Pack / multi-group create ----------------------------------------------------
+
+
+@router.post("/pack/preview", response_model=PackPreviewResponse)
+def pack_preview(
+    payload: PackPreviewRequest,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> PackPreviewResponse:
+    settings = get_or_default_settings(db, payload.program_id)
+    min_size = payload.min_size if payload.min_size is not None else settings.min_group_size
+    max_size = payload.max_size if payload.max_size is not None else settings.max_group_size
+    try:
+        pool = load_pack_pool(db, payload.program_id, payload.application_ids)
+        groups = shuffle_pack(
+            pool, min_size=min_size, max_size=max_size, seed=payload.seed
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    out_groups: list[PackPreviewGroup] = []
+    for i, group in enumerate(groups):
+        applicants = [
+            EligibleCandidateResponse(**eligible_response_for(app)) for app in group
+        ]
+        out_groups.append(
+            PackPreviewGroup(
+                index=i,
+                size=len(group),
+                application_ids=[app.id for app in group],
+                applicants=applicants,
+            )
+        )
+    return PackPreviewResponse(
+        min_size=min_size,
+        max_size=max_size,
+        total_candidates=len(pool),
+        groups=out_groups,
+    )
+
+
+@router.post("/pack", response_model=PackGdSessionsResponse, status_code=201)
+def pack_sessions(
+    payload: PackGdSessionsRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> PackGdSessionsResponse:
+    program = db.get(Program, payload.program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    settings = get_or_default_settings(db, payload.program_id)
+    default_duration = settings.default_duration_minutes
+    join_opens = default_join_opens_minutes()
+
+    # Validate pool once across all groups (no duplicates, eligible).
+    all_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for g in payload.groups:
+        for aid in g.application_ids:
+            if aid in seen:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Application {aid} appears in more than one group",
+                )
+            seen.add(aid)
+            all_ids.append(aid)
+    try:
+        pool = load_pack_pool(db, payload.program_id, all_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    by_id = {app.id: app for app in pool}
+
+    created_ids: list[uuid.UUID] = []
+    for g in payload.groups:
+        duration = g.duration_minutes if g.duration_minutes is not None else default_duration
+        session = GdSession(
+            program_id=payload.program_id,
+            label=g.label,
+            target_size=len(g.application_ids),
+            scheduled_at=g.scheduled_at,
+            duration_minutes=duration,
+            assignment_strategy="manual",
+            status="draft",
+            track=payload.track,
+            topic=g.topic,
+            professor_email=g.professor_email,
+            professor_name=g.professor_name,
+            join_opens_minutes_before=join_opens,
+            created_by=admin.id,
+        )
+        db.add(session)
+        db.flush()
+        apps = [by_id[aid] for aid in g.application_ids]
+        _replace_participants(db, session, apps)
+
+        if payload.track == "online" and payload.auto_create_meetings:
+            if not teams_graph_enabled():
+                raise HTTPException(
+                    status_code=503,
+                    detail="Teams Graph is disabled; cannot auto-create meetings.",
+                )
+            try:
+                config = TeamsGraphConfig.from_env()
+                start = g.scheduled_at or datetime.now(timezone.utc)
+                meeting = create_online_meeting(
+                    subject=g.label or "Group Discussion",
+                    start=start,
+                    duration_minutes=duration,
+                    config=config,
+                )
+            except TeamsGraphConfigError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except (TeamsGraphApiError, ValueError) as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            session.teams_meeting_id = meeting.meeting_id
+            session.join_url = meeting.join_url
+            session.status = "meeting_ready"
+        elif payload.track == "manual":
+            session.status = "meeting_ready"
+
+        if payload.move_status:
+            for app in apps:
+                app.status = "group_discussion"
+                db.add(
+                    AdminDecision(
+                        application_id=app.id,
+                        stage="stage_group_discussion",
+                        decision="approved",
+                        decided_by=admin.id,
+                        notes=f"Packed into GD session {session.id}",
+                    )
+                )
+        created_ids.append(session.id)
+
+    db.commit()
+    sessions = [_session_query(db, sid) for sid in created_ids]
+    return PackGdSessionsResponse(
+        sessions=[serialize_session(s) for s in sessions if s is not None]
+    )
 
 
 # --- Sessions ---------------------------------------------------------------------

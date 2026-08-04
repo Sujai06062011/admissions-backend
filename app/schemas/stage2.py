@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 DecisionStage = Literal[
     "stage2_move_to_campus",
+    "stage_group_discussion",
     "stage3_call_for_interview",
     "stage4_offer",
 ]

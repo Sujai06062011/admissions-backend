@@ -9,6 +9,7 @@ ApplicationStatus = Literal[
     "under_review",
     "moved_to_campus",
     "testing_complete",
+    "group_discussion",
     "called_for_interview",
     "offered",
     "rejected",

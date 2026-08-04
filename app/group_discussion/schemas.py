@@ -33,7 +33,7 @@ class SmokeAcsTokenResponse(BaseModel):
 class CreateGdSessionRequest(BaseModel):
     program_id: uuid.UUID
     label: str | None = Field(default=None, max_length=120)
-    target_size: int = Field(default=5, ge=5, le=7)
+    target_size: int = Field(default=5, ge=2, le=12)
     scheduled_at: datetime | None = None
     duration_minutes: int = Field(default=60, ge=15, le=240)
     assignment_strategy: AssignmentStrategy = "composite"
@@ -49,7 +49,7 @@ class CreateGdSessionRequest(BaseModel):
 class AssignGdSessionRequest(BaseModel):
     assignment_strategy: AssignmentStrategy | None = None
     application_ids: list[uuid.UUID] | None = None
-    target_size: int | None = Field(default=None, ge=5, le=7)
+    target_size: int | None = Field(default=None, ge=2, le=12)
 
 
 class UpdateGdSessionRequest(BaseModel):
@@ -200,3 +200,64 @@ class CandidateGdSessionStateResponse(BaseModel):
     topic: str | None
     duration_minutes: int
     track: str
+
+
+class GdProgramSettingsResponse(BaseModel):
+    program_id: uuid.UUID
+    min_group_size: int
+    max_group_size: int
+    default_duration_minutes: int
+
+
+class UpdateGdProgramSettingsRequest(BaseModel):
+    min_group_size: int = Field(ge=2, le=12)
+    max_group_size: int = Field(ge=2, le=12)
+    default_duration_minutes: int = Field(default=30, ge=15, le=240)
+
+
+class PackPreviewRequest(BaseModel):
+    """Shuffle a candidate pool into proposed group memberships (no DB writes)."""
+
+    program_id: uuid.UUID
+    application_ids: list[uuid.UUID] = Field(min_length=1)
+    min_size: int | None = Field(default=None, ge=2, le=12)
+    max_size: int | None = Field(default=None, ge=2, le=12)
+    seed: int | None = None
+
+
+class PackPreviewGroup(BaseModel):
+    index: int
+    size: int
+    application_ids: list[uuid.UUID]
+    applicants: list[EligibleCandidateResponse]
+
+
+class PackPreviewResponse(BaseModel):
+    min_size: int
+    max_size: int
+    total_candidates: int
+    groups: list[PackPreviewGroup]
+
+
+class PackGroupSpec(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    scheduled_at: datetime | None = None
+    duration_minutes: int | None = Field(default=None, ge=15, le=240)
+    professor_name: str | None = Field(default=None, max_length=120)
+    professor_email: str | None = None
+    topic: str | None = Field(default=None, max_length=500)
+    application_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class PackGdSessionsRequest(BaseModel):
+    """Create multiple GD sessions from an explicit group plan and move apps to GD stage."""
+
+    program_id: uuid.UUID
+    track: GdTrack = "online"
+    groups: list[PackGroupSpec] = Field(min_length=1)
+    auto_create_meetings: bool = True
+    move_status: bool = True
+
+
+class PackGdSessionsResponse(BaseModel):
+    sessions: list[GdSessionResponse]
